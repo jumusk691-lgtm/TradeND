@@ -101,26 +101,28 @@ export function Splash({ onEnter }: SplashProps) {
           </div>
         </div>
 
-        {/* Action buttons */}
+        {/* Action buttons (Trade Now + Download APK Link) */}
         <div
           className={`mt-10 flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto transition-all duration-700 delay-500 ${
             mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
           }`}
         >
+          {/* Trade Now Button */}
           <button
             onClick={onEnter}
-            className="group relative inline-flex items-center justify-center gap-3 rounded-xl bg-accent px-10 py-5 text-lg font-bold text-white btn-glow transition-transform hover:scale-[1.03] active:scale-95 w-full sm:w-auto"
+            className="group relative inline-flex items-center justify-center gap-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-8 py-4 text-lg font-bold text-white shadow-lg shadow-emerald-900/35 transition-transform hover:scale-[1.03] active:scale-95 w-full sm:w-auto"
           >
-            Enter Website
-            <ArrowRight className="h-6 w-6 transition-transform group-hover:translate-x-1" />
+            Trade Now
+            <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
           </button>
 
+          {/* Download APK Button & Link */}
           <a
             href={APK_URL}
             download="TRADEND.apk"
-            className="group relative inline-flex items-center justify-center gap-3 rounded-xl border border-gold/50 bg-gold/10 px-10 py-5 text-lg font-bold text-gold gold-glow transition-transform hover:scale-[1.03] active:scale-95 w-full sm:w-auto"
+            className="group relative inline-flex items-center justify-center gap-3 rounded-xl border border-gold/50 bg-gold/10 px-8 py-4 text-lg font-bold text-gold gold-glow transition-transform hover:scale-[1.03] active:scale-95 w-full sm:w-auto"
           >
-            <Download className="h-6 w-6" />
+            <Download className="h-5 w-5" />
             Download App (APK)
           </a>
         </div>
@@ -158,7 +160,7 @@ export function Splash({ onEnter }: SplashProps) {
       >
         <span className="text-[11px] uppercase tracking-widest">Scroll</span>
         <div className="flex h-9 w-5 items-start justify-center rounded-full border border-gray-600 p-1">
-          <div className="h-2 w-1 animate-bounce rounded-full bg-accent" />
+          <div className="h-2 w-1 animate-bounce rounded-full bg-emerald-400" />
         </div>
       </button>
     </section>
