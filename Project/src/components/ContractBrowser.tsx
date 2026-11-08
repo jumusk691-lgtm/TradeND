@@ -141,7 +141,8 @@ export function ContractBrowser({
         }
       }
 
-      sql += ` LIMIT 400;`;
+      // Order by expiry chronologically like brokers
+      sql += ` ORDER BY expiry ASC LIMIT 400;`;
 
       const res = db.exec(sql);
       if (res.length > 0) {
@@ -204,7 +205,7 @@ export function ContractBrowser({
     }
   }, [exchange, kind, search, dbInstance]);
 
-  // Expiries List for Selector Dropdown
+  // Expiries List sorted chronologically (Weekly & Monthly Order like brokers)
   const availableExpiries = useMemo(() => {
     const expMap = new Map<string, string>(); // rawExpiry -> formattedExpiry
     rawContracts.forEach(c => {
@@ -212,7 +213,10 @@ export function ContractBrowser({
         expMap.set(c.rawExpiry, c.expiry);
       }
     });
-    return Array.from(expMap.entries()).map(([raw, formatted]) => ({ raw, formatted }));
+
+    return Array.from(expMap.entries())
+      .map(([raw, formatted]) => ({ raw, formatted }))
+      .sort((a, b) => a.raw.localeCompare(b.raw));
   }, [rawContracts]);
 
   // Filtered by Selected Expiry
