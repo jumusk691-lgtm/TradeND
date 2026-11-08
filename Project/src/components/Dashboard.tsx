@@ -3,11 +3,10 @@ import { INSTRUMENTS, getInstrument } from '@/data/instruments';
 import { DERIVATIVE_CONTRACTS } from '@/data/derivatives';
 import { CandleChart } from '@/components/CandleChart';
 import { ContractBrowser } from '@/components/ContractBrowser';
-import { MarketTable } from '@/components/MarketTable';
 import { TradePanel } from '@/components/TradePanel';
 import { WatchlistPanel } from '@/components/WatchlistPanel';
 import { PositionsPanel } from '@/components/PositionsPanel';
-import { WalletPanel, makeTx } from '@/components/WalletPanel';
+import { WalletPanel } from '@/components/WalletPanel';
 import { Navbar } from '@/components/Navbar';
 import { useLivePrices } from '@/hooks/useLivePrices';
 import { fmtINR } from '@/lib/format';
@@ -122,13 +121,6 @@ export function Dashboard(props: DashboardProps) {
           <div id="positions" className="grid gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2 space-y-6">
               <CandleChart symbol={selected} basePrice={basePrice} livePrice={livePrice} />
-              <MarketTable
-                livePrices={livePrices}
-                selected={selected}
-                onSelect={setSelected}
-                watchlist={watchlist}
-                onToggleWatch={onToggleWatch}
-              />
             </div>
             <div className="space-y-6">
               <PositionsPanel
@@ -227,33 +219,26 @@ function MarketsView(props: {
       />
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Left + center: chart + market table */}
+        {/* Left + center: chart */}
         <div className="lg:col-span-2 space-y-6">
           <CandleChart symbol={selected} basePrice={basePrice} livePrice={livePrice} />
-          <MarketTable
-            livePrices={livePrices}
-            selected={selected}
-            onSelect={onSelect}
-            watchlist={watchlist}
-            onToggleWatch={onToggleWatch}
-          />
         </div>
 
         {/* Right column: trade + watchlist + positions */}
         <div className="space-y-6">
-        <TradePanel
-          symbol={selected}
-          livePrice={livePrice}
-          walletBalance={walletBalance}
-          onOpenPosition={onOpenPosition}
-        />
-        <WatchlistPanel
-          watchlist={watchlist}
-          livePrices={livePrices}
-          onSelect={onSelect}
-          onRemove={onRemoveWatch}
-          selected={selected}
-        />
+          <TradePanel
+            symbol={selected}
+            livePrice={livePrice}
+            walletBalance={walletBalance}
+            onOpenPosition={onOpenPosition}
+          />
+          <WatchlistPanel
+            watchlist={watchlist}
+            livePrices={livePrices}
+            onSelect={onSelect}
+            onRemove={onRemoveWatch}
+            selected={selected}
+          />
           <PositionsPanel
             positions={positions}
             livePrices={livePrices}
