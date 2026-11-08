@@ -50,107 +50,123 @@ export function ContractBrowser({
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState(true);
 
+  const [dbInstance, setDbInstance] = useState<any>(null);
   const [derivativeContracts, setDerivativeContracts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // 1. Load SQLite Database File once on mount
   useEffect(() => {
-    async function loadAndParseDbFile() {
+    async function initDatabase() {
       try {
         setLoading(true);
         setErrorMsg(null);
 
-        // 1. Supabase se direct .db file fetch karo
         const response = await fetch(DB_FILE_URL, { cache: 'no-store' });
-        if (!response.ok) {
-          throw new Error(`Failed to fetch database file: ${response.statusText}`);
-        }
+        if (!response.ok) throw new Error(`Failed to fetch DB: ${response.statusText}`);
         const arrayBuffer = await response.arrayBuffer();
 
-        // 2. Global window.initSqlJs ka use karo (No npm install needed)
         //@ts-ignore
         const initSqlJs = window.initSqlJs;
-        if (!initSqlJs) {
-          throw new Error('SQL.js script not loaded in index.html');
-        }
+        if (!initSqlJs) throw new Error('SQL.js not loaded in index.html');
 
         const SQL = await initSqlJs({
           locateFile: (file: string) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
         });
 
         const db = new SQL.Database(new Uint8Array(arrayBuffer));
+        setDbInstance(db);
 
-        const query = `
-          SELECT token, symbol, exch_seg, strike, expiry, name, lotsize, tick_size, instrumenttype 
-          FROM symbols 
-          LIMIT 500
-        `;
-        const res = db.exec(query);
-
-        if (res.length > 0) {
-          const columns = res[0].columns;
-          const values = res[0].values;
-
-          const parsedList = values.map((row: any) => {
-            const rowData: Record<string, any> = {};
-            columns.forEach((col: string, idx: number) => {
-              rowData[col] = row[idx];
-            });
-
-            const rawSym = rowData.symbol ? String(rowData.symbol) : '';
-            const sym = formatSymbolName(rawSym);
-
-            let inferredKind: DerivativeKind = 'FUT';
-            if (sym.endsWith('CE')) inferredKind = 'CE';
-            else if (sym.endsWith('PE')) inferredKind = 'PE';
-            else if (rowData.instrumenttype?.includes('FUT') || rowData.instrumenttype?.includes('COM')) inferredKind = 'FUT';
-
-            let exch: Exchange = 'NSE';
-            const seg = String(rowData.exch_seg || '').toUpperCase();
-            if (seg.includes('BSE') || seg.includes('BFO')) exch = 'BSE';
-            else if (seg.includes('MCX')) exch = 'MCX';
-
-            return {
-              token: String(rowData.token || ''),
-              symbol: sym,
-              name: rowData.name ? formatSymbolName(String(rowData.name)) : sym,
-              exchange: exch,
-              kind: inferredKind,
-              expiry: rowData.expiry ? String(rowData.expiry) : '',
-              strike: rowData.strike ? Number(rowData.strike) : undefined,
-              price: 100.0,
-              changePct: 0.0,
-              lotsize: String(rowData.lotsize || '1'),
-              tick_size: String(rowData.tick_size || '0.05')
-            };
-          });
-
-          setDerivativeContracts(parsedList);
-        } else {
-          setDerivativeContracts([]);
-        }
-
-        db.close();
+        // Load initial records
+        loadSymbolsFromDb(db, 'NSE', 'ALL', '');
       } catch (err: any) {
-        console.error('Error reading Supabase .db file:', err);
-        setErrorMsg(err?.message || 'Failed to parse database file');
-      } finally {
+        console.error('DB Load Error:', err);
+        setErrorMsg(err?.message || 'Failed to load database');
         setLoading(false);
       }
     }
 
-    loadAndParseDbFile();
+    initDatabase();
   }, []);
 
-  const contracts = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return derivativeContracts.filter((contract) => {
-      if (exchange !== 'ALL' && contract.exchange !== exchange) return false;
-      if (kind !== 'ALL' && contract.kind !== kind) return false;
-      if (query && !contract.name.toLowerCase().includes(query) && !contract.symbol.toLowerCase().includes(query)) return false;
-      return true;
-    });
-  }, [derivativeContracts, exchange, kind, search]);
+  // 2. Query function mirroring Android DatabaseHelper search logic
+  const loadSymbolsFromDb = (db: any, exFilter: string, kindFilter: string, searchQuery: string) => {
+    try {
+      let sql = `SELECT token, symbol, exch_seg, strike, expiry, name, lotsize, tick_size, instrumenttype FROM symbols WHERE 1=1`;
+      
+      if (exFilter !== 'ALL') {
+        if (exFilter === 'NSE') sql += ` AND (exch_seg LIKE '%NSE%' OR exch_seg LIKE '%NFO%')`;
+        else if (exFilter === 'BSE') sql += ` AND (exch_seg LIKE '%BSE%' OR exch_seg LIKE '%BFO%')`;
+        else if (exFilter === 'MCX') sql += ` AND exch_seg LIKE '%MCX%'`;
+      }
+
+      if (kindFilter === 'CE') sql += ` AND (symbol LIKE '%CE' OR instrumenttype LIKE '%OPT%')`;
+      else if (kindFilter === 'PE') sql += ` AND (symbol LIKE '%PE' OR instrumenttype LIKE '%OPT%')`;
+      else if (kindFilter === 'FUT') sql += ` AND (instrumenttype LIKE '%FUT%' OR symbol LIKE '%FUT%')`;
+
+      if (searchQuery.trim() !== '') {
+        const cleanQuery = searchQuery.trim().toUpperCase();
+        sql += ` AND (symbol LIKE '%${cleanQuery}%' OR name LIKE '%${cleanQuery}%' OR strike LIKE '%${cleanQuery}%')`;
+      }
+
+      sql += ` LIMIT 200;`;
+
+      const res = db.exec(sql);
+      if (res.length > 0) {
+        const columns = res[0].columns;
+        const values = res[0].values;
+
+        const parsed = values.map((row: any) => {
+          const rowData: Record<string, any> = {};
+          columns.forEach((col: string, idx: number) => {
+            rowData[col] = row[idx];
+          });
+
+          const rawSym = rowData.symbol ? String(rowData.symbol) : '';
+          const sym = formatSymbolName(rawSym);
+
+          let inferredKind: DerivativeKind = 'FUT';
+          if (sym.endsWith('CE') || rowData.instrumenttype?.includes('CE')) inferredKind = 'CE';
+          else if (sym.endsWith('PE') || rowData.instrumenttype?.includes('PE')) inferredKind = 'PE';
+
+          let exch: Exchange = 'NSE';
+          const seg = String(rowData.exch_seg || '').toUpperCase();
+          if (seg.includes('BSE') || seg.includes('BFO')) exch = 'BSE';
+          else if (seg.includes('MCX')) exch = 'MCX';
+
+          return {
+            token: String(rowData.token || ''),
+            symbol: sym,
+            name: rowData.name ? formatSymbolName(String(rowData.name)) : sym,
+            exchange: exch,
+            kind: inferredKind,
+            expiry: rowData.expiry ? String(rowData.expiry) : '',
+            strike: rowData.strike ? Number(rowData.strike) : undefined,
+            price: 100.0,
+            changePct: 0.0,
+            lotsize: String(rowData.lotsize || '1'),
+            tick_size: String(rowData.tick_size || '0.05')
+          };
+        });
+
+        setDerivativeContracts(parsed);
+      } else {
+        setDerivativeContracts([]);
+      }
+    } catch (e) {
+      console.error('Query execution error:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Trigger query whenever filters or search change
+  useEffect(() => {
+    if (dbInstance) {
+      setLoading(true);
+      loadSymbolsFromDb(dbInstance, exchange, kind, search);
+    }
+  }, [exchange, kind, search, dbInstance]);
 
   return (
     <section className="glass rounded-2xl overflow-hidden">
@@ -162,7 +178,7 @@ export function ContractBrowser({
               <h2 className="font-display text-lg font-bold text-white">Options &amp; Futures</h2>
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              Live parsed contracts directly from Supabase DB file
+              Live queries directly from Supabase angel_master.db
             </p>
           </div>
           <button
@@ -222,16 +238,16 @@ export function ContractBrowser({
         <div className="max-h-[410px] overflow-y-auto scrollbar-thin p-2 sm:p-3">
           <div className="mb-2 flex items-center justify-between px-2 text-[10px] uppercase tracking-[0.16em] text-gray-600">
             <span>{exchange === 'ALL' ? 'All exchanges' : `${exchange} contracts`}</span>
-            <span>{contracts.length} contracts</span>
+            <span>{derivativeContracts.length} contracts</span>
           </div>
 
           {loading ? (
-            <div className="py-8 text-center text-xs text-gray-400">Loading database from Supabase...</div>
+            <div className="py-8 text-center text-xs text-gray-400">Querying live database from Supabase...</div>
           ) : errorMsg ? (
             <div className="py-8 text-center text-xs text-rose-400">Error: {errorMsg}</div>
           ) : (
             <div className="space-y-1.5">
-              {contracts.map((contract) => {
+              {derivativeContracts.map((contract) => {
                 const selectedContract = selected === contract.symbol;
                 const watched = watchlist.includes(contract.symbol);
                 const up = (contract.changePct ?? 0) >= 0;
@@ -300,7 +316,7 @@ export function ContractBrowser({
                 );
               })}
 
-              {contracts.length === 0 && (
+              {derivativeContracts.length === 0 && (
                 <div className="rounded-xl border border-dashed border-white/10 px-4 py-10 text-center text-sm text-gray-500">
                   No contracts match this filter.
                 </div>
