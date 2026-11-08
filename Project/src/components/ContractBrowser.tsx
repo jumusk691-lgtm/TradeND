@@ -1,13 +1,9 @@
 import { ChevronDown, Plus, Search, Star } from 'lucide-react';
 import { useMemo, useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import { fmtNum, fmtPct } from '@/lib/format';
 import type { DerivativeKind, Exchange } from '@/types';
 
-// Supabase Configuration & Credentials
-const SUPABASE_URL = "https://fnfynhgkdevxytxtfzrk.supabase.co/storage/v1/object/public/myt";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZuZnluaGdrZGV2eHl0eHRmenJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0OTAwMjgsImV4cCI6MjA5MzA2NjAyOH0.Tgr8kB6KGeAsAbXzH8a2wlLStqMFS3fnFPcowbL4Di8";
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const DB_FILE_URL = "https://fnfynhgkdevxytxtfzrk.supabase.co/storage/v1/object/public/myt/angel_master.db";
 
 interface ContractBrowserProps {
   selected: string;
@@ -22,6 +18,27 @@ type ContractFilter = DerivativeKind | 'ALL';
 const exchanges: ExchangeFilter[] = ['ALL', 'NSE', 'BSE', 'MCX'];
 const kinds: ContractFilter[] = ['ALL', 'FUT', 'CE', 'PE'];
 
+function formatSymbolName(rawSymbol: string): string {
+  if (!rawSymbol) return '';
+  const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+  for (const m of monthNames) {
+    if (rawSymbol.toUpperCase().includes(m)) return rawSymbol;
+  }
+  const match2 = rawSymbol.match(/^([A-Za-z]+)(\d{2})(1[0-2])(\d{2})(.*)$/);
+  if (match2) {
+    const [, prefix, yy, mm, dd, rest] = match2;
+    const monthStr = monthNames[parseInt(mm, 10) - 1];
+    return `${prefix.toUpperCase()}${yy}${monthStr}${dd}${rest}`;
+  }
+  const match1 = rawSymbol.match(/^([A-Za-z]+)(\d{2})([1-9])(\d{2})(.*)$/);
+  if (match1) {
+    const [, prefix, yy, mm, dd, rest] = match1;
+    const monthStr = monthNames[parseInt(mm, 10) - 1];
+    return `${prefix.toUpperCase()}${yy}${monthStr}${dd}${rest}`;
+  }
+  return rawSymbol;
+}
+
 export function ContractBrowser({
   selected,
   onSelect,
@@ -35,61 +52,94 @@ export function ContractBrowser({
 
   const [derivativeContracts, setDerivativeContracts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Supabase से DatabaseHelper के कॉलम के अनुसार डेटा फेच करना
   useEffect(() => {
-    async function fetchSupabaseSymbols() {
+    async function loadAndParseDbFile() {
       try {
         setLoading(true);
-        // Supabase की 'symbols' टेबल से एंड्रॉइड वाले कॉलम फेच कर रहे हैं
-        const { data, error } = await supabase
-          .from('symbols')
-          .select('token, symbol, exch_seg, strike, expiry, name, lotsize, tick_size, instrumenttype')
-          .limit(500); // Performance के लिए limit
+        setErrorMsg(null);
 
-        if (error) {
-          console.error('Supabase Fetch Error:', error.message);
-        } else if (data) {
-          // डेटा को वेबसाइट के फॉर्मेट में मैप करना
-          const formattedData = data.map((item: any) => {
-            const sym = item.symbol || '';
-            // Determine kind (CE, PE, FUT) based on symbol suffix or instrumenttype
+        // 1. Supabase se direct .db file fetch karo
+        const response = await fetch(DB_FILE_URL, { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`Failed to fetch database file: ${response.statusText}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+
+        // 2. Global window.initSqlJs ka use karo (No npm install needed)
+        //@ts-ignore
+        const initSqlJs = window.initSqlJs;
+        if (!initSqlJs) {
+          throw new Error('SQL.js script not loaded in index.html');
+        }
+
+        const SQL = await initSqlJs({
+          locateFile: (file: string) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+        });
+
+        const db = new SQL.Database(new Uint8Array(arrayBuffer));
+
+        const query = `
+          SELECT token, symbol, exch_seg, strike, expiry, name, lotsize, tick_size, instrumenttype 
+          FROM symbols 
+          LIMIT 500
+        `;
+        const res = db.exec(query);
+
+        if (res.length > 0) {
+          const columns = res[0].columns;
+          const values = res[0].values;
+
+          const parsedList = values.map((row: any) => {
+            const rowData: Record<string, any> = {};
+            columns.forEach((col: string, idx: number) => {
+              rowData[col] = row[idx];
+            });
+
+            const rawSym = rowData.symbol ? String(rowData.symbol) : '';
+            const sym = formatSymbolName(rawSym);
+
             let inferredKind: DerivativeKind = 'FUT';
             if (sym.endsWith('CE')) inferredKind = 'CE';
             else if (sym.endsWith('PE')) inferredKind = 'PE';
-            else if (item.instrumenttype?.includes('FUT') || item.instrumenttype?.includes('COM')) inferredKind = 'FUT';
+            else if (rowData.instrumenttype?.includes('FUT') || rowData.instrumenttype?.includes('COM')) inferredKind = 'FUT';
 
-            // Clean exchange segment
-            let exch = 'NSE';
-            const seg = (item.exch_seg || '').toUpperCase();
+            let exch: Exchange = 'NSE';
+            const seg = String(rowData.exch_seg || '').toUpperCase();
             if (seg.includes('BSE') || seg.includes('BFO')) exch = 'BSE';
             else if (seg.includes('MCX')) exch = 'MCX';
 
             return {
+              token: String(rowData.token || ''),
               symbol: sym,
-              name: item.name || sym,
+              name: rowData.name ? formatSymbolName(String(rowData.name)) : sym,
               exchange: exch,
               kind: inferredKind,
-              expiry: item.expiry || '',
-              strike: item.strike ? Number(item.strike) : undefined,
-              price: 100.0, // Default paper price agar database me price na ho
+              expiry: rowData.expiry ? String(rowData.expiry) : '',
+              strike: rowData.strike ? Number(rowData.strike) : undefined,
+              price: 100.0,
               changePct: 0.0,
-              changeAbs: 0.0,
-              lotsize: item.lotsize || '1',
-              tick_size: item.tick_size || '0.05'
+              lotsize: String(rowData.lotsize || '1'),
+              tick_size: String(rowData.tick_size || '0.05')
             };
           });
 
-          setDerivativeContracts(formattedData);
+          setDerivativeContracts(parsedList);
+        } else {
+          setDerivativeContracts([]);
         }
-      } catch (err) {
-        console.error('Unexpected error:', err);
+
+        db.close();
+      } catch (err: any) {
+        console.error('Error reading Supabase .db file:', err);
+        setErrorMsg(err?.message || 'Failed to parse database file');
       } finally {
         setLoading(false);
       }
     }
 
-    fetchSupabaseSymbols();
+    loadAndParseDbFile();
   }, []);
 
   const contracts = useMemo(() => {
@@ -112,13 +162,12 @@ export function ContractBrowser({
               <h2 className="font-display text-lg font-bold text-white">Options &amp; Futures</h2>
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              Trade NSE, BSE &amp; MCX contracts with live paper prices from Supabase.
+              Live parsed contracts directly from Supabase DB file
             </p>
           </div>
           <button
             onClick={() => setExpanded((open) => !open)}
             className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-semibold text-gray-400 hover:text-white transition-colors"
-            aria-expanded={expanded}
           >
             {expanded ? 'Hide' : 'Show'}
             <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
@@ -134,9 +183,7 @@ export function ContractBrowser({
                     key={item}
                     onClick={() => setExchange(item)}
                     className={`rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
-                      exchange === item
-                        ? 'bg-accent text-white'
-                        : 'text-gray-500 hover:bg-white/5 hover:text-white'
+                      exchange === item ? 'bg-accent text-white' : 'text-gray-500 hover:text-white'
                     }`}
                   >
                     {item}
@@ -149,16 +196,10 @@ export function ContractBrowser({
                     key={item}
                     onClick={() => setKind(item)}
                     className={`rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
-                      kind === item
-                        ? item === 'CE'
-                          ? 'bg-emerald-500 text-white'
-                          : item === 'PE'
-                            ? 'bg-rose-500 text-white'
-                            : 'bg-gold text-black'
-                        : 'text-gray-500 hover:bg-white/5 hover:text-white'
+                      kind === item ? 'bg-gold text-black' : 'text-gray-500 hover:text-white'
                     }`}
                   >
-                    {item === 'ALL' ? 'ALL' : item === 'FUT' ? 'FUTURES' : item}
+                    {item}
                   </button>
                 ))}
               </div>
@@ -170,7 +211,7 @@ export function ContractBrowser({
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search NIFTY, SENSEX, GOLD, strike..."
-                className="w-full rounded-lg border border-white/5 bg-black/40 py-2.5 pl-9 pr-3 text-sm text-white placeholder:text-gray-600 focus:border-accent/50 focus:outline-none"
+                className="w-full rounded-lg border border-white/5 bg-black/40 py-2.5 pl-9 pr-3 text-sm text-white placeholder:text-gray-600 focus:outline-none"
               />
             </div>
           </>
@@ -185,7 +226,9 @@ export function ContractBrowser({
           </div>
 
           {loading ? (
-            <div className="py-8 text-center text-xs text-gray-400">Loading symbols from Supabase Database...</div>
+            <div className="py-8 text-center text-xs text-gray-400">Loading database from Supabase...</div>
+          ) : errorMsg ? (
+            <div className="py-8 text-center text-xs text-rose-400">Error: {errorMsg}</div>
           ) : (
             <div className="space-y-1.5">
               {contracts.map((contract) => {
@@ -194,11 +237,9 @@ export function ContractBrowser({
                 const up = (contract.changePct ?? 0) >= 0;
                 return (
                   <div
-                    key={contract.symbol}
+                    key={contract.token || contract.symbol}
                     className={`flex items-center gap-3 rounded-xl border p-3 transition-colors ${
-                      selectedContract
-                        ? 'border-accent/40 bg-accent/10'
-                        : 'border-white/5 bg-white/[0.015] hover:border-white/10 hover:bg-white/[0.035]'
+                      selectedContract ? 'border-accent/40 bg-accent/10' : 'border-white/5 bg-white/[0.015]'
                     }`}
                   >
                     <button
@@ -209,19 +250,11 @@ export function ContractBrowser({
                         <span className="truncate text-sm font-bold text-white sm:text-[15px]">
                           {contract.name}
                         </span>
-                        <span
-                          className={`rounded px-1.5 py-0.5 text-[10px] font-extrabold ${
-                            contract.kind === 'CE'
-                              ? 'bg-emerald-500/20 text-emerald-300'
-                              : contract.kind === 'PE'
-                                ? 'bg-rose-500/20 text-rose-300'
-                                : 'bg-accent/20 text-accent-200'
-                          }`}
-                        >
+                        <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[10px] font-extrabold text-accent-200">
                           {contract.kind}
                         </span>
                       </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-500">
+                      <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-500">
                         <span>{contract.exchange}</span>
                         {contract.expiry && (
                           <>
@@ -232,7 +265,7 @@ export function ContractBrowser({
                         {contract.strike && (
                           <>
                             <span>·</span>
-                            <span>Strike {contract.strike.toLocaleString('en-IN')}</span>
+                            <span>Strike {contract.strike}</span>
                           </>
                         )}
                       </div>
@@ -249,19 +282,16 @@ export function ContractBrowser({
 
                     <button
                       onClick={() => onAddWatch(contract.symbol)}
-                      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors ${
-                        watched
-                          ? 'border-gold/30 bg-gold/10 text-gold'
-                          : 'border-white/5 text-gray-600 hover:border-gold/30 hover:text-gold'
+                      className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border ${
+                        watched ? 'border-gold/30 bg-gold/10 text-gold' : 'border-white/5 text-gray-600'
                       }`}
-                      aria-label={watched ? 'Remove from watchlist' : 'Add to watchlist'}
                     >
                       <Star className={`h-4 w-4 ${watched ? 'fill-gold' : ''}`} />
                     </button>
 
                     <button
                       onClick={() => onSelect(contract.symbol)}
-                      className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg bg-gold px-2.5 text-[11px] font-extrabold text-black transition-transform hover:scale-105 active:scale-95"
+                      className="inline-flex h-8 items-center gap-1 rounded-lg bg-gold px-2.5 text-[11px] font-extrabold text-black"
                     >
                       <Plus className="h-3.5 w-3.5" />
                       Trade
@@ -269,6 +299,7 @@ export function ContractBrowser({
                   </div>
                 );
               })}
+
               {contracts.length === 0 && (
                 <div className="rounded-xl border border-dashed border-white/10 px-4 py-10 text-center text-sm text-gray-500">
                   No contracts match this filter.
