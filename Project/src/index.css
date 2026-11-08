@@ -1,0 +1,174 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --accent: #0066ff;
+    --gold: #daa520;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background-color: #ffffff;
+    color: #0f172a;
+    letter-spacing: -0.01em;
+  }
+
+  ::selection {
+    background: rgba(0, 102, 255, 0.35);
+    color: #fff;
+  }
+}
+
+@layer components {
+  .font-display {
+    font-family: 'Sora', 'Inter', system-ui, sans-serif;
+  }
+
+  .grid-bg {
+    background-image:
+      linear-gradient(rgba(0, 102, 255, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 102, 255, 0.06) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .glass {
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+    border: 1px solid rgba(15, 23, 42, 0.09);
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+  }
+
+  .gold-text {
+    background: linear-gradient(120deg, #b8860b 0%, #996515 45%, #7a5200 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .accent-text {
+    background: linear-gradient(120deg, #0052cc 0%, #0066ff 55%, #003d99 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .btn-glow {
+    box-shadow: 0 0 0 1px rgba(0, 102, 255, 0.5), 0 8px 30px -6px rgba(0, 102, 255, 0.5);
+  }
+
+  .gold-glow {
+    box-shadow: 0 0 0 1px rgba(218, 165, 32, 0.55), 0 8px 30px -6px rgba(218, 165, 32, 0.55);
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 102, 255, 0.4) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: rgba(0, 102, 255, 0.35);
+    border-radius: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .nav-link {
+    position: relative;
+    transition: color 0.2s ease;
+  }
+  .nav-link::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    bottom: -2px;
+    height: 2px;
+    width: 0;
+    background: linear-gradient(90deg, #0066ff, #daa520);
+    transition: width 0.25s ease;
+  }
+  .nav-link:hover::after,
+  .nav-link.active::after {
+    width: 100%;
+  }
+}
+
+/* No scrollbar for body during splash */
+body.splash-locked {
+  overflow: hidden;
+}
+
+/* Light trading workspace surfaces */
+.bg-black\/40,
+.bg-black\/30,
+.bg-black\/60,
+.bg-black\/95,
+.bg-black\/80,
+.bg-\[\#0a0a0c\] {
+  background-color: rgba(248, 250, 252, 0.96) !important;
+}
+
+.bg-black\/20 {
+  background-color: rgba(241, 245, 249, 0.78) !important;
+}
+
+.bg-white\/5 {
+  background-color: rgba(15, 23, 42, 0.045) !important;
+}
+
+.bg-white\/\[0\.03\],
+.bg-white\/\[0\.035\],
+.bg-white\/\[0\.015\] {
+  background-color: rgba(15, 23, 42, 0.035) !important;
+}
+
+.text-white {
+  color: #0f172a !important;
+}
+
+.bg-accent.text-white,
+.bg-emerald-500.text-white,
+.bg-rose-500.text-white,
+.bg-gold.text-white,
+.bg-accent\/10 .text-white,
+.bg-accent\/15 .text-white {
+  color: #ffffff !important;
+}
+
+.text-gray-300 {
+  color: #334155 !important;
+}
+
+.text-gray-400 {
+  color: #475569 !important;
+}
+
+.text-gray-500,
+.text-gray-600 {
+  color: #64748b !important;
+}
+
+.border-white\/5,
+.border-white\/10 {
+  border-color: rgba(15, 23, 42, 0.1) !important;
+}
+
+.border-white\/\[0\.03\] {
+  border-color: rgba(15, 23, 42, 0.07) !important;
+}
+
+.bg-ink {
+  background-color: #ffffff !important;
+}
