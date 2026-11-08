@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ShieldCheck, ArrowRight, Lock, Zap, TrendingUp } from 'lucide-react';
+import { ShieldCheck, Download, ArrowRight, Lock, Zap, TrendingUp } from 'lucide-react';
+import { APK_URL } from '@/types';
 
 interface SplashProps {
   onEnter: () => void;
@@ -100,19 +101,28 @@ export function Splash({ onEnter }: SplashProps) {
           </div>
         </div>
 
-        {/* Action button - Replaced Download APK with Green Trade Now Button */}
+        {/* Action buttons (Both Trade Now & Download APK) */}
         <div
-          className={`mt-10 flex flex-col sm:flex-row items-center justify-center gap-4 w-full sm:w-auto transition-all duration-700 delay-500 ${
+          className={`mt-10 flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto transition-all duration-700 delay-500 ${
             mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
           }`}
         >
           <button
             onClick={onEnter}
-            className="group relative inline-flex items-center justify-center gap-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-12 py-5 text-lg font-bold text-white shadow-lg shadow-emerald-900/30 transition-transform hover:scale-[1.03] active:scale-95 w-full sm:w-auto"
+            className="group relative inline-flex items-center justify-center gap-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-8 py-4 text-lg font-bold text-white shadow-lg shadow-emerald-900/35 transition-transform hover:scale-[1.03] active:scale-95 w-full sm:w-auto"
           >
             Trade Now
-            <ArrowRight className="h-6 w-6 transition-transform group-hover:translate-x-1" />
+            <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
           </button>
+
+          <a
+            href={APK_URL}
+            download="TRADEND.apk"
+            className="group relative inline-flex items-center justify-center gap-3 rounded-xl border border-gold/50 bg-gold/10 px-8 py-4 text-lg font-bold text-gold gold-glow transition-transform hover:scale-[1.03] active:scale-95 w-full sm:w-auto"
+          >
+            <Download className="h-5 w-5" />
+            Download App (APK)
+          </a>
         </div>
 
         {/* Quick stats */}
