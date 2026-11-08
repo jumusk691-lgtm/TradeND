@@ -1,0 +1,323 @@
+import { useMemo, useState } from 'react';
+import { INSTRUMENTS, getInstrument } from '@/data/instruments';
+import { DERIVATIVE_CONTRACTS } from '@/data/derivatives';
+import { CandleChart } from '@/components/CandleChart';
+import { ContractBrowser } from '@/components/ContractBrowser';
+import { MarketTable } from '@/components/MarketTable';
+import { TradePanel } from '@/components/TradePanel';
+import { WatchlistPanel } from '@/components/WatchlistPanel';
+import { PositionsPanel } from '@/components/PositionsPanel';
+import { WalletPanel, makeTx } from '@/components/WalletPanel';
+import { Navbar } from '@/components/Navbar';
+import { useLivePrices } from '@/hooks/useLivePrices';
+import { fmtINR } from '@/lib/format';
+import type { DashboardTab, Position, WalletTx } from '@/types';
+
+interface DashboardProps {
+  activeTab: DashboardTab;
+  onTabChange: (t: DashboardTab) => void;
+  walletBalance: number;
+  watchlist: string[];
+  positions: Position[];
+  transactions: WalletTx[];
+  onToggleWatch: (s: string) => void;
+  onRemoveWatch: (s: string) => void;
+  onOpenPosition: (p: Position) => void;
+  onClosePosition: (id: string) => void;
+  onDeposit: (amount: number, method: string) => void;
+  onWithdraw: (amount: number, method: string) => void;
+  onBackToSplash: () => void;
+  onOpenSupport: () => void;
+}
+
+export function Dashboard(props: DashboardProps) {
+  const {
+    activeTab,
+    onTabChange,
+    walletBalance,
+    watchlist,
+    positions,
+    transactions,
+    onToggleWatch,
+    onRemoveWatch,
+    onOpenPosition,
+    onClosePosition,
+    onDeposit,
+    onWithdraw,
+    onBackToSplash,
+    onOpenSupport,
+  } = props;
+
+  const [selected, setSelected] = useState<string>('NIFTY 50');
+
+  // Build seed prices from instruments
+  const seeds = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const instrument of [...INSTRUMENTS, ...DERIVATIVE_CONTRACTS]) {
+      m[instrument.symbol] = instrument.price;
+    }
+    return m;
+  }, []);
+
+  const livePrices = useLivePrices(seeds, 2200);
+  const selectedInstrument = getInstrument(selected);
+  const livePrice = livePrices[selected] ?? selectedInstrument.price;
+  const basePrice = seeds[selected] ?? selectedInstrument.price;
+
+  return (
+    <div className="min-h-screen bg-ink text-white">
+      {/* subtle grid background */}
+      <div className="pointer-events-none fixed inset-0 grid-bg opacity-30" />
+
+      <Navbar
+        activeTab={activeTab}
+        onTabChange={onTabChange}
+        walletBalance={walletBalance}
+        onBackToSplash={onBackToSplash}
+        onOpenSupport={onOpenSupport}
+      />
+
+      <main className="relative mx-auto max-w-7xl px-4 sm:px-6 py-6">
+        {activeTab === 'markets' && (
+          <MarketsView
+            selected={selected}
+            onSelect={setSelected}
+            livePrices={livePrices}
+            basePrice={basePrice}
+            livePrice={livePrice}
+            watchlist={watchlist}
+            onToggleWatch={onToggleWatch}
+            onRemoveWatch={onRemoveWatch}
+            walletBalance={walletBalance}
+            onOpenPosition={onOpenPosition}
+            positions={positions}
+            onClosePosition={onClosePosition}
+          />
+        )}
+
+        {activeTab === 'wallet' && (
+          <div id="wallet" className="grid gap-6 lg:grid-cols-2">
+            <WalletPanel
+              balance={walletBalance}
+              transactions={transactions}
+              onDeposit={onDeposit}
+              onWithdraw={onWithdraw}
+            />
+            <div className="space-y-6">
+              <BalanceSummary
+                balance={walletBalance}
+                positionsCount={positions.length}
+                txCount={transactions.length}
+              />
+              <PositionsPanel
+                positions={positions}
+                livePrices={livePrices}
+                onClose={onClosePosition}
+              />
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'positions' && (
+          <div id="positions" className="grid gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-2 space-y-6">
+              <CandleChart symbol={selected} basePrice={basePrice} livePrice={livePrice} />
+              <MarketTable
+                livePrices={livePrices}
+                selected={selected}
+                onSelect={setSelected}
+                watchlist={watchlist}
+                onToggleWatch={onToggleWatch}
+              />
+            </div>
+            <div className="space-y-6">
+              <PositionsPanel
+                positions={positions}
+                livePrices={livePrices}
+                onClose={onClosePosition}
+              />
+              <WatchlistPanel
+                watchlist={watchlist}
+                livePrices={livePrices}
+                onSelect={setSelected}
+                onRemove={onRemoveWatch}
+                selected={selected}
+              />
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="relative mt-8 border-t border-white/5">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+            <div>
+              <div className="font-display text-lg font-bold mb-2">
+                <span className="gold-text">TRA</span>
+                <span className="accent-text">DEND</span>
+              </div>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Zero-brokerage, ultra-secure trading for NSE, BSE &amp; MCX. Built for speed,
+                designed for trust.
+              </p>
+            </div>
+            <FooterCol
+              title="Platform"
+              links={['Markets', 'Wallet', 'Positions', 'Download App']}
+            />
+            <FooterCol
+              title="Markets"
+              links={['Nifty 50', 'Sensex', 'Gold Futures', 'Bank Nifty']}
+            />
+            <FooterCol
+              title="Legal"
+              links={['Privacy Policy', 'Terms of Service', 'Risk Disclosure', 'Sitemap']}
+            />
+          </div>
+          <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-white/5 pt-5 text-xs text-gray-600">
+            <span>© {new Date().getFullYear()} TRADEND · zerobrokerageapp.in</span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              All systems operational
+            </span>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+function MarketsView(props: {
+  selected: string;
+  onSelect: (s: string) => void;
+  livePrices: Record<string, number>;
+  basePrice: number;
+  livePrice: number;
+  watchlist: string[];
+  onToggleWatch: (s: string) => void;
+  onRemoveWatch: (s: string) => void;
+  walletBalance: number;
+  onOpenPosition: (p: Position) => void;
+  positions: Position[];
+  onClosePosition: (id: string) => void;
+}) {
+  const {
+    selected,
+    onSelect,
+    livePrices,
+    basePrice,
+    livePrice,
+    watchlist,
+    onToggleWatch,
+    onRemoveWatch,
+    walletBalance,
+    onOpenPosition,
+    positions,
+    onClosePosition,
+  } = props;
+
+  return (
+    <div id="markets" className="space-y-6">
+      <ContractBrowser
+        selected={selected}
+        onSelect={onSelect}
+        onAddWatch={onToggleWatch}
+        watchlist={watchlist}
+      />
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Left + center: chart + market table */}
+        <div className="lg:col-span-2 space-y-6">
+          <CandleChart symbol={selected} basePrice={basePrice} livePrice={livePrice} />
+          <MarketTable
+            livePrices={livePrices}
+            selected={selected}
+            onSelect={onSelect}
+            watchlist={watchlist}
+            onToggleWatch={onToggleWatch}
+          />
+        </div>
+
+        {/* Right column: trade + watchlist + positions */}
+        <div className="space-y-6">
+        <TradePanel
+          symbol={selected}
+          livePrice={livePrice}
+          walletBalance={walletBalance}
+          onOpenPosition={onOpenPosition}
+        />
+        <WatchlistPanel
+          watchlist={watchlist}
+          livePrices={livePrices}
+          onSelect={onSelect}
+          onRemove={onRemoveWatch}
+          selected={selected}
+        />
+          <PositionsPanel
+            positions={positions}
+            livePrices={livePrices}
+            onClose={onClosePosition}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BalanceSummary({
+  balance,
+  positionsCount,
+  txCount,
+}: {
+  balance: number;
+  positionsCount: number;
+  txCount: number;
+}) {
+  return (
+    <div className="glass rounded-2xl p-5">
+      <h3 className="font-display text-lg font-bold text-white mb-4">Account Summary</h3>
+      <div className="grid grid-cols-3 gap-3">
+        <StatCard label="Balance" value={fmtINR(balance, { compact: true })} tone="accent" />
+        <StatCard label="Positions" value={String(positionsCount)} tone="white" />
+        <StatCard label="Transactions" value={String(txCount)} tone="white" />
+      </div>
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: 'accent' | 'white' | 'gold';
+}) {
+  const color =
+    tone === 'accent' ? 'text-accent' : tone === 'gold' ? 'text-gold' : 'text-white';
+  return (
+    <div className="rounded-xl border border-white/5 bg-black/40 p-3 text-center">
+      <div className="text-[11px] uppercase tracking-wider text-gray-500">{label}</div>
+      <div className={`mt-1 font-display text-lg font-bold ${color}`}>{value}</div>
+    </div>
+  );
+}
+
+function FooterCol({ title, links }: { title: string; links: string[] }) {
+  return (
+    <div>
+      <h4 className="font-semibold text-white text-sm mb-2">{title}</h4>
+      <ul className="space-y-1.5">
+        {links.map((l) => (
+          <li key={l}>
+            <a href="#" className="text-xs text-gray-500 hover:text-accent transition-colors">
+              {l}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
