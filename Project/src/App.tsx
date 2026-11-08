@@ -9,13 +9,25 @@ import { useLivePrices } from '@/hooks/useLivePrices';
 import { makeTx } from '@/components/WalletPanel';
 import type { DashboardTab, Position, WalletTx } from '@/types';
 
-const STARTING_BALANCE = 100000;
+// Firebase imports for Realtime Database balance fetching
+import { initializeApp, getApps } from 'firebase/app';
+import { getDatabase, ref, onValue } from 'firebase/database';
+
+// Firebase configuration (uses existing or defaults to your project database)
+const firebaseConfig = {
+  databaseURL: "https://tradend-default-rtdb.firebaseio.com/"
+};
+
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+const db = getDatabase(app);
+
+const STARTING_BALANCE = 50000;
 
 function App() {
   const [view, setView] = useState<'splash' | 'dashboard'>('splash');
   const [supportOpen, setSupportOpen] = useState(false);
 
-  // Persistent client-side session state (localStorage)
+  // Persistent client-side session state (localStorage fallback)
   const [walletBalance, setWalletBalance] = usePersistentState<number>(
     'tradend:wallet',
     STARTING_BALANCE
@@ -35,6 +47,30 @@ function App() {
     'markets'
   );
 
+  // 🔥 FIREBASE REAL-TIME BALANCE LISTENER (Real Account Funds Fetch)
+  useEffect(() => {
+    const currentUid = localStorage.getItem('tradend:uid') || 'default_user';
+    const balanceRef = ref(db, `users_details/${currentUid}/funds/balance`);
+
+    const unsubscribe = onValue(
+      balanceRef,
+      (snapshot) => {
+        const serverBalance = snapshot.val();
+        if (serverBalance !== null && serverBalance !== undefined) {
+          const parsedBal = Number(serverBalance);
+          if (!isNaN(parsedBal)) {
+            setWalletBalance(parsedBal);
+          }
+        }
+      },
+      (error) => {
+        console.error("Firebase balance fetch error:", error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [setWalletBalance]);
+
   // Live prices for the ticker (always running so it's live when dashboard shows)
   const seeds: Record<string, number> = {};
   for (const i of INSTRUMENTS) seeds[i.symbol] = i.price;
@@ -52,7 +88,6 @@ function App() {
 
   const handleEnter = useCallback(() => {
     setView('dashboard');
-    // smooth scroll to top of dashboard
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
   }, []);
 
@@ -82,7 +117,6 @@ function App() {
   const openPosition = useCallback(
     (p: Position) => {
       setPositions((prev) => [...prev, p]);
-      // Deduct margin from balance
       setWalletBalance((b) => Math.max(0, b - p.margin));
     },
     [setPositions, setWalletBalance]
@@ -96,7 +130,6 @@ function App() {
           const cur = livePrices[pos.symbol] ?? pos.currentPrice;
           const dir = pos.side === 'BUY' ? 1 : -1;
           const pnl = (cur - pos.entryPrice) * pos.qty * dir;
-          // return margin + PnL
           setWalletBalance((b) => Math.max(0, b + pos.margin + pnl));
         }
         return prev.filter((p) => p.id !== id);
@@ -108,7 +141,6 @@ function App() {
   // --- Wallet handlers ---
   const handleDeposit = useCallback(
     (amount: number, method: string) => {
-      // Instantly credit (simulated) + record completed tx
       setWalletBalance((b) => b + amount);
       setTransactions((prev) => [
         makeTx('DEPOSIT', amount, method, 'COMPLETED'),
@@ -120,7 +152,6 @@ function App() {
 
   const handleWithdraw = useCallback(
     (amount: number, method: string) => {
-      // Deduct immediately, record as pending
       setWalletBalance((b) => Math.max(0, b - amount));
       setTransactions((prev) => [
         makeTx('WITHDRAW', amount, method, 'PENDING'),
