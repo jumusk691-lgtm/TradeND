@@ -18,6 +18,28 @@ type ContractFilter = DerivativeKind | 'ALL';
 const exchanges: ExchangeFilter[] = ['ALL', 'NSE', 'BSE', 'MCX'];
 const kinds: ContractFilter[] = ['ALL', 'FUT', 'CE', 'PE'];
 
+// Number Wali Date (2026-11-17) Ko Broker Style (17 Nov 2026) Me Convert Karne Ka Function
+function formatExpiryDate(rawExpiry: string): string {
+  if (!rawExpiry) return '';
+  
+  // Agar pehle se "17 NOV 2026" jaisa hai toh direct return karo
+  if (/[a-zA-Z]/.test(rawExpiry)) return rawExpiry;
+
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  
+  // YYYY-MM-DD format handling
+  const parts = rawExpiry.split('-');
+  if (parts.length === 3) {
+    const year = parts[0];
+    const monthIndex = parseInt(parts[1], 10) - 1;
+    const day = parts[2];
+    if (monthIndex >= 0 && monthIndex < 12) {
+      return `${day} ${monthNames[monthIndex]} ${year}`;
+    }
+  }
+  return rawExpiry;
+}
+
 function formatSymbolName(rawSymbol: string): string {
   if (!rawSymbol) return '';
   const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
@@ -56,7 +78,6 @@ export function ContractBrowser({
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // 1. Load SQLite Database File once
   useEffect(() => {
     async function initDatabase() {
       try {
@@ -88,7 +109,6 @@ export function ContractBrowser({
     initDatabase();
   }, []);
 
-  // 2. Query Database with precise filters
   const loadSymbolsFromDb = (db: any, exFilter: string, kindFilter: string, searchQuery: string) => {
     try {
       let sql = `SELECT token, symbol, exch_seg, strike, expiry, name, lotsize, tick_size, instrumenttype FROM symbols WHERE 1=1`;
@@ -147,13 +167,16 @@ export function ContractBrowser({
           if (seg.includes('BSE') || seg.includes('BFO')) exch = 'BSE';
           else if (seg.includes('MCX')) exch = 'MCX';
 
+          const rawExp = rowData.expiry ? String(rowData.expiry) : '';
+
           return {
             token: String(rowData.token || ''),
             symbol: sym,
             name: rowData.name ? formatSymbolName(String(rowData.name)) : sym,
             exchange: exch,
             kind: inferredKind,
-            expiry: rowData.expiry ? String(rowData.expiry) : '',
+            rawExpiry: rawExp,
+            expiry: formatExpiryDate(rawExp), // Monthly Name Converter Applied
             strike: rowData.strike && rowData.strike !== '0.0' ? Number(rowData.strike) : undefined,
             price: 100.0,
             changePct: 0.0,
@@ -176,24 +199,26 @@ export function ContractBrowser({
   useEffect(() => {
     if (dbInstance) {
       setLoading(true);
-      setSelectedExpiry('ALL'); // Reset expiry filter on exchange/kind change
+      setSelectedExpiry('ALL');
       loadSymbolsFromDb(dbInstance, exchange, kind, search);
     }
   }, [exchange, kind, search, dbInstance]);
 
-  // Extract unique expiry list for the dropdown filter
+  // Expiries List for Selector Dropdown
   const availableExpiries = useMemo(() => {
-    const expSet = new Set<string>();
+    const expMap = new Map<string, string>(); // rawExpiry -> formattedExpiry
     rawContracts.forEach(c => {
-      if (c.expiry) expSet.add(c.expiry);
+      if (c.rawExpiry && c.expiry) {
+        expMap.set(c.rawExpiry, c.expiry);
+      }
     });
-    return Array.from(expSet);
+    return Array.from(expMap.entries()).map(([raw, formatted]) => ({ raw, formatted }));
   }, [rawContracts]);
 
-  // Filter contracts by selected expiry
+  // Filtered by Selected Expiry
   const contracts = useMemo(() => {
     if (selectedExpiry === 'ALL') return rawContracts;
-    return rawContracts.filter(c => c.expiry === selectedExpiry);
+    return rawContracts.filter(c => c.rawExpiry === selectedExpiry);
   }, [rawContracts, selectedExpiry]);
 
   return (
@@ -249,7 +274,7 @@ export function ContractBrowser({
               </div>
             </div>
 
-            {/* Expiry Selector Dropdown (Broker Style) */}
+            {/* Broker Style Expiry Select Dropdown */}
             <div className="mt-3 flex items-center gap-2">
               <div className="text-xs text-gray-400 font-semibold">Expiry:</div>
               <select
@@ -258,9 +283,9 @@ export function ContractBrowser({
                 className="rounded-lg border border-white/10 bg-black/60 px-3 py-2 text-xs font-bold text-accent focus:outline-none"
               >
                 <option value="ALL">All Expiries</option>
-                {availableExpiries.map((exp) => (
-                  <option key={exp} value={exp}>
-                    {exp}
+                {availableExpiries.map((item) => (
+                  <option key={item.raw} value={item.raw}>
+                    {item.formatted}
                   </option>
                 ))}
               </select>
