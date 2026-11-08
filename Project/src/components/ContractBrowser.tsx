@@ -55,7 +55,7 @@ export function ContractBrowser({
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // 1. Load SQLite Database File once on mount
+  // 1. Fetch live DB binary once
   useEffect(() => {
     async function initDatabase() {
       try {
@@ -63,7 +63,7 @@ export function ContractBrowser({
         setErrorMsg(null);
 
         const response = await fetch(DB_FILE_URL, { cache: 'no-store' });
-        if (!response.ok) throw new Error(`Failed to fetch DB: ${response.statusText}`);
+        if (!response.ok) throw new Error(`DB Fetch failed: ${response.statusText}`);
         const arrayBuffer = await response.arrayBuffer();
 
         //@ts-ignore
@@ -76,12 +76,10 @@ export function ContractBrowser({
 
         const db = new SQL.Database(new Uint8Array(arrayBuffer));
         setDbInstance(db);
-
-        // Load initial records
         loadSymbolsFromDb(db, 'NSE', 'ALL', '');
       } catch (err: any) {
-        console.error('DB Load Error:', err);
-        setErrorMsg(err?.message || 'Failed to load database');
+        console.error('DB Init Error:', err);
+        setErrorMsg(err?.message || 'Failed to load database file');
         setLoading(false);
       }
     }
@@ -89,27 +87,39 @@ export function ContractBrowser({
     initDatabase();
   }, []);
 
-  // 2. Query function mirroring Android DatabaseHelper search logic
+  // 2. Android DatabaseHelper.kt matching smart search query logic
   const loadSymbolsFromDb = (db: any, exFilter: string, kindFilter: string, searchQuery: string) => {
     try {
       let sql = `SELECT token, symbol, exch_seg, strike, expiry, name, lotsize, tick_size, instrumenttype FROM symbols WHERE 1=1`;
       
+      // Exchange Segment filter
       if (exFilter !== 'ALL') {
-        if (exFilter === 'NSE') sql += ` AND (exch_seg LIKE '%NSE%' OR exch_seg LIKE '%NFO%')`;
-        else if (exFilter === 'BSE') sql += ` AND (exch_seg LIKE '%BSE%' OR exch_seg LIKE '%BFO%')`;
-        else if (exFilter === 'MCX') sql += ` AND exch_seg LIKE '%MCX%'`;
+        if (exFilter === 'NSE') sql += ` AND (exch_seg IN ('NSE', 'NFO', 'NSE_EQ', 'NSE_FO') OR exch_seg LIKE 'NSE%')`;
+        else if (exFilter === 'BSE') sql += ` AND (exch_seg IN ('BSE', 'BFO', 'BSE_EQ', 'BSE_FO') OR exch_seg LIKE 'BSE%')`;
+        else if (exFilter === 'MCX') sql += ` AND (exch_seg IN ('MCX', 'MCX_FO') OR exch_seg LIKE 'MCX%')`;
       }
 
-      if (kindFilter === 'CE') sql += ` AND (symbol LIKE '%CE' OR instrumenttype LIKE '%OPT%')`;
-      else if (kindFilter === 'PE') sql += ` AND (symbol LIKE '%PE' OR instrumenttype LIKE '%OPT%')`;
+      // Kind filter (CE, PE, FUT)
+      if (kindFilter === 'CE') sql += ` AND (symbol LIKE '%CE' OR instrumenttype LIKE '%CE%' OR instrumenttype LIKE '%OPT%')`;
+      else if (kindFilter === 'PE') sql += ` AND (symbol LIKE '%PE' OR instrumenttype LIKE '%PE%' OR instrumenttype LIKE '%OPT%')`;
       else if (kindFilter === 'FUT') sql += ` AND (instrumenttype LIKE '%FUT%' OR symbol LIKE '%FUT%')`;
 
+      // Smart Search: Separate Letters and Numbers (e.g. Nifty25000 -> NIFTY + 25000)
       if (searchQuery.trim() !== '') {
-        const cleanQuery = searchQuery.trim().toUpperCase();
-        sql += ` AND (symbol LIKE '%${cleanQuery}%' OR name LIKE '%${cleanQuery}%' OR strike LIKE '%${cleanQuery}%')`;
+        const rawInput = searchQuery.trim().toUpperCase();
+        const letters = rawInput.replace(/[^A-Z]/g, '');
+        const digits = rawInput.replace(/[^0-9]/g, '');
+
+        if (letters.length > 0 && digits.length > 0) {
+          sql += ` AND ((symbol LIKE '%${letters}%' OR name LIKE '%${letters}%') AND (symbol LIKE '%${digits}%' OR strike LIKE '%${digits}%' OR name LIKE '%${digits}%'))`;
+        } else if (letters.length > 0) {
+          sql += ` AND (symbol LIKE '%${letters}%' OR name LIKE '%${letters}%')`;
+        } else if (digits.length > 0) {
+          sql += ` AND (symbol LIKE '%${digits}%' OR strike LIKE '%${digits}%' OR name LIKE '%${digits}%')`;
+        }
       }
 
-      sql += ` LIMIT 200;`;
+      sql += ` LIMIT 300;`;
 
       const res = db.exec(sql);
       if (res.length > 0) {
@@ -126,8 +136,8 @@ export function ContractBrowser({
           const sym = formatSymbolName(rawSym);
 
           let inferredKind: DerivativeKind = 'FUT';
-          if (sym.endsWith('CE') || rowData.instrumenttype?.includes('CE')) inferredKind = 'CE';
-          else if (sym.endsWith('PE') || rowData.instrumenttype?.includes('PE')) inferredKind = 'PE';
+          if (sym.endsWith('CE') || String(rowData.instrumenttype || '').includes('CE')) inferredKind = 'CE';
+          else if (sym.endsWith('PE') || String(rowData.instrumenttype || '').includes('PE')) inferredKind = 'PE';
 
           let exch: Exchange = 'NSE';
           const seg = String(rowData.exch_seg || '').toUpperCase();
@@ -160,7 +170,6 @@ export function ContractBrowser({
     }
   };
 
-  // Trigger query whenever filters or search change
   useEffect(() => {
     if (dbInstance) {
       setLoading(true);
@@ -178,7 +187,7 @@ export function ContractBrowser({
               <h2 className="font-display text-lg font-bold text-white">Options &amp; Futures</h2>
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              Live queries directly from Supabase angel_master.db
+              Live parsed contracts directly from Supabase DB file
             </p>
           </div>
           <button
