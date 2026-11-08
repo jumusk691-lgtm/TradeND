@@ -48,14 +48,15 @@ export function ContractBrowser({
   const [exchange, setExchange] = useState<ExchangeFilter>('NSE');
   const [kind, setKind] = useState<ContractFilter>('ALL');
   const [search, setSearch] = useState('');
+  const [selectedExpiry, setSelectedExpiry] = useState<string>('ALL');
   const [expanded, setExpanded] = useState(true);
 
   const [dbInstance, setDbInstance] = useState<any>(null);
-  const [derivativeContracts, setDerivativeContracts] = useState<any[]>([]);
+  const [rawContracts, setRawContracts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // 1. Fetch live DB binary once
+  // 1. Load SQLite Database File once
   useEffect(() => {
     async function initDatabase() {
       try {
@@ -79,7 +80,7 @@ export function ContractBrowser({
         loadSymbolsFromDb(db, 'NSE', 'ALL', '');
       } catch (err: any) {
         console.error('DB Init Error:', err);
-        setErrorMsg(err?.message || 'Failed to load database file');
+        setErrorMsg(err?.message || 'Failed to load database');
         setLoading(false);
       }
     }
@@ -87,24 +88,25 @@ export function ContractBrowser({
     initDatabase();
   }, []);
 
-  // 2. Android DatabaseHelper.kt matching smart search query logic
+  // 2. Query Database with precise filters
   const loadSymbolsFromDb = (db: any, exFilter: string, kindFilter: string, searchQuery: string) => {
     try {
       let sql = `SELECT token, symbol, exch_seg, strike, expiry, name, lotsize, tick_size, instrumenttype FROM symbols WHERE 1=1`;
       
-      // Exchange Segment filter
       if (exFilter !== 'ALL') {
         if (exFilter === 'NSE') sql += ` AND (exch_seg IN ('NSE', 'NFO', 'NSE_EQ', 'NSE_FO') OR exch_seg LIKE 'NSE%')`;
         else if (exFilter === 'BSE') sql += ` AND (exch_seg IN ('BSE', 'BFO', 'BSE_EQ', 'BSE_FO') OR exch_seg LIKE 'BSE%')`;
         else if (exFilter === 'MCX') sql += ` AND (exch_seg IN ('MCX', 'MCX_FO') OR exch_seg LIKE 'MCX%')`;
       }
 
-      // Kind filter (CE, PE, FUT)
-      if (kindFilter === 'CE') sql += ` AND (symbol LIKE '%CE' OR instrumenttype LIKE '%CE%' OR instrumenttype LIKE '%OPT%')`;
-      else if (kindFilter === 'PE') sql += ` AND (symbol LIKE '%PE' OR instrumenttype LIKE '%PE%' OR instrumenttype LIKE '%OPT%')`;
-      else if (kindFilter === 'FUT') sql += ` AND (instrumenttype LIKE '%FUT%' OR symbol LIKE '%FUT%')`;
+      if (kindFilter === 'CE') {
+        sql += ` AND (symbol LIKE '%CE' OR instrumenttype LIKE '%CE%' OR (instrumenttype LIKE '%OPT%' AND symbol NOT LIKE '%PE'))`;
+      } else if (kindFilter === 'PE') {
+        sql += ` AND (symbol LIKE '%PE' OR instrumenttype LIKE '%PE%')`;
+      } else if (kindFilter === 'FUT') {
+        sql += ` AND (instrumenttype LIKE '%FUT%' OR symbol LIKE '%FUT%' OR instrumenttype LIKE '%COM%' OR (strike IS NULL OR strike = '' OR strike = '0.0')) AND symbol NOT LIKE '%CE' AND symbol NOT LIKE '%PE'`;
+      }
 
-      // Smart Search: Separate Letters and Numbers (e.g. Nifty25000 -> NIFTY + 25000)
       if (searchQuery.trim() !== '') {
         const rawInput = searchQuery.trim().toUpperCase();
         const letters = rawInput.replace(/[^A-Z]/g, '');
@@ -119,7 +121,7 @@ export function ContractBrowser({
         }
       }
 
-      sql += ` LIMIT 300;`;
+      sql += ` LIMIT 400;`;
 
       const res = db.exec(sql);
       if (res.length > 0) {
@@ -138,6 +140,7 @@ export function ContractBrowser({
           let inferredKind: DerivativeKind = 'FUT';
           if (sym.endsWith('CE') || String(rowData.instrumenttype || '').includes('CE')) inferredKind = 'CE';
           else if (sym.endsWith('PE') || String(rowData.instrumenttype || '').includes('PE')) inferredKind = 'PE';
+          else if (sym.includes('FUT') || String(rowData.instrumenttype || '').includes('FUT') || String(rowData.instrumenttype || '').includes('COM')) inferredKind = 'FUT';
 
           let exch: Exchange = 'NSE';
           const seg = String(rowData.exch_seg || '').toUpperCase();
@@ -151,7 +154,7 @@ export function ContractBrowser({
             exchange: exch,
             kind: inferredKind,
             expiry: rowData.expiry ? String(rowData.expiry) : '',
-            strike: rowData.strike ? Number(rowData.strike) : undefined,
+            strike: rowData.strike && rowData.strike !== '0.0' ? Number(rowData.strike) : undefined,
             price: 100.0,
             changePct: 0.0,
             lotsize: String(rowData.lotsize || '1'),
@@ -159,12 +162,12 @@ export function ContractBrowser({
           };
         });
 
-        setDerivativeContracts(parsed);
+        setRawContracts(parsed);
       } else {
-        setDerivativeContracts([]);
+        setRawContracts([]);
       }
     } catch (e) {
-      console.error('Query execution error:', e);
+      console.error('Query error:', e);
     } finally {
       setLoading(false);
     }
@@ -173,9 +176,25 @@ export function ContractBrowser({
   useEffect(() => {
     if (dbInstance) {
       setLoading(true);
+      setSelectedExpiry('ALL'); // Reset expiry filter on exchange/kind change
       loadSymbolsFromDb(dbInstance, exchange, kind, search);
     }
   }, [exchange, kind, search, dbInstance]);
+
+  // Extract unique expiry list for the dropdown filter
+  const availableExpiries = useMemo(() => {
+    const expSet = new Set<string>();
+    rawContracts.forEach(c => {
+      if (c.expiry) expSet.add(c.expiry);
+    });
+    return Array.from(expSet);
+  }, [rawContracts]);
+
+  // Filter contracts by selected expiry
+  const contracts = useMemo(() => {
+    if (selectedExpiry === 'ALL') return rawContracts;
+    return rawContracts.filter(c => c.expiry === selectedExpiry);
+  }, [rawContracts, selectedExpiry]);
 
   return (
     <section className="glass rounded-2xl overflow-hidden">
@@ -187,7 +206,7 @@ export function ContractBrowser({
               <h2 className="font-display text-lg font-bold text-white">Options &amp; Futures</h2>
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              Live parsed contracts directly from Supabase DB file
+              Live contracts with broker expiry filters
             </p>
           </div>
           <button
@@ -230,12 +249,29 @@ export function ContractBrowser({
               </div>
             </div>
 
+            {/* Expiry Selector Dropdown (Broker Style) */}
+            <div className="mt-3 flex items-center gap-2">
+              <div className="text-xs text-gray-400 font-semibold">Expiry:</div>
+              <select
+                value={selectedExpiry}
+                onChange={(e) => setSelectedExpiry(e.target.value)}
+                className="rounded-lg border border-white/10 bg-black/60 px-3 py-2 text-xs font-bold text-accent focus:outline-none"
+              >
+                <option value="ALL">All Expiries</option>
+                {availableExpiries.map((exp) => (
+                  <option key={exp} value={exp}>
+                    {exp}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="relative mt-3">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search NIFTY, SENSEX, GOLD, strike..."
+                placeholder="Search NIFTY, GOLD, SILVER, strike..."
                 className="w-full rounded-lg border border-white/5 bg-black/40 py-2.5 pl-9 pr-3 text-sm text-white placeholder:text-gray-600 focus:outline-none"
               />
             </div>
@@ -247,16 +283,16 @@ export function ContractBrowser({
         <div className="max-h-[410px] overflow-y-auto scrollbar-thin p-2 sm:p-3">
           <div className="mb-2 flex items-center justify-between px-2 text-[10px] uppercase tracking-[0.16em] text-gray-600">
             <span>{exchange === 'ALL' ? 'All exchanges' : `${exchange} contracts`}</span>
-            <span>{derivativeContracts.length} contracts</span>
+            <span>{contracts.length} contracts</span>
           </div>
 
           {loading ? (
-            <div className="py-8 text-center text-xs text-gray-400">Querying live database from Supabase...</div>
+            <div className="py-8 text-center text-xs text-gray-400">Loading contracts...</div>
           ) : errorMsg ? (
             <div className="py-8 text-center text-xs text-rose-400">Error: {errorMsg}</div>
           ) : (
             <div className="space-y-1.5">
-              {derivativeContracts.map((contract) => {
+              {contracts.map((contract) => {
                 const selectedContract = selected === contract.symbol;
                 const watched = watchlist.includes(contract.symbol);
                 const up = (contract.changePct ?? 0) >= 0;
@@ -325,7 +361,7 @@ export function ContractBrowser({
                 );
               })}
 
-              {derivativeContracts.length === 0 && (
+              {contracts.length === 0 && (
                 <div className="rounded-xl border border-dashed border-white/10 px-4 py-10 text-center text-sm text-gray-500">
                   No contracts match this filter.
                 </div>
