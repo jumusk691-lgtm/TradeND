@@ -33,7 +33,7 @@ function App() {
     STARTING_BALANCE
   );
   
-  // 🌟 Watchlist initialized as empty (Demo symbols completely removed)
+  // Watchlist initialized as empty
   const [watchlist, setWatchlist] = usePersistentState<any[]>('tradend:watchlist', []);
   const [positions, setPositions] = usePersistentState<Position[]>('tradend:positions', []);
   const [transactions, setTransactions] = usePersistentState<WalletTx[]>(
@@ -45,9 +45,11 @@ function App() {
     'markets'
   );
 
-  // 🔥 FIREBASE REAL-TIME BALANCE LISTENER (Real Account Funds Fetch)
+  // 🔥 1. FIREBASE REAL-TIME BALANCE LISTENER (Re-syncs dynamically on View change / Login)
   useEffect(() => {
-    const currentUid = localStorage.getItem('tradend:uid') || 'default_user';
+    const currentUid = localStorage.getItem('tradend:uid');
+    if (!currentUid) return;
+
     const balanceRef = ref(db, `users_details/${currentUid}/funds/balance`);
 
     const unsubscribe = onValue(
@@ -67,11 +69,13 @@ function App() {
     );
 
     return () => unsubscribe();
-  }, [setWalletBalance]);
+  }, [view, setWalletBalance]);
 
-  // 🔥 FIREBASE REAL-TIME WATCHLIST SYNC (User Isolation)
+  // 🔥 2. FIREBASE REAL-TIME WATCHLIST SYNC (User Isolation)
   useEffect(() => {
-    const currentUid = localStorage.getItem('tradend:uid') || 'default_user';
+    const currentUid = localStorage.getItem('tradend:uid');
+    if (!currentUid) return;
+
     const watchlistRef = ref(db, `users_details/${currentUid}/watchlist`);
 
     const unsubscribe = onValue(
@@ -82,7 +86,6 @@ function App() {
           const listArray = Array.isArray(data) ? data : Object.values(data);
           setWatchlist(listArray);
         } else {
-          // If empty in database, initialize empty array securely
           set(watchlistRef, []);
         }
       },
@@ -92,9 +95,9 @@ function App() {
     );
 
     return () => unsubscribe();
-  }, [setWatchlist]);
+  }, [view, setWatchlist]);
 
-  // Live prices for the ticker (always running so it's live when dashboard shows)
+  // Live prices for the ticker
   const seeds: Record<string, number> = {};
   for (const i of INSTRUMENTS) seeds[i.symbol] = i.price;
   const livePrices = useLivePrices(seeds, 2200);
@@ -109,12 +112,22 @@ function App() {
     return () => document.body.classList.remove('splash-locked');
   }, [view]);
 
+  // 🌟 3. SECURE HANDLE ENTER (Verifies active login UID before entering Dashboard)
   const handleEnter = useCallback(() => {
-    setView('dashboard');
-    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
+    const currentUid = localStorage.getItem('tradend:uid');
+    if (currentUid) {
+      setView('dashboard');
+      requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
+    } else {
+      console.warn("No active UID found. Sign in required.");
+    }
   }, []);
 
   const handleBackToSplash = useCallback(() => {
+    // Clear session on logout / back to splash
+    localStorage.removeItem('tradend:uid');
+    localStorage.removeItem('tradend:email');
+    localStorage.removeItem('tradend:name');
     setView('splash');
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
   }, []);
@@ -122,7 +135,9 @@ function App() {
   // --- Watchlist handlers (Synced directly to Firebase per user UID) ---
   const updateFirebaseWatchlist = useCallback((newList: any[]) => {
     setWatchlist(newList);
-    const currentUid = localStorage.getItem('tradend:uid') || 'default_user';
+    const currentUid = localStorage.getItem('tradend:uid');
+    if (!currentUid) return;
+
     const watchlistRef = ref(db, `users_details/${currentUid}/watchlist`);
     set(watchlistRef, newList).catch((err) => {
       console.error("Failed to update watchlist in Firebase:", err);
