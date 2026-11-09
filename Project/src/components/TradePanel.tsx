@@ -1,11 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { Zap, ArrowUpCircle, ArrowDownCircle, Info } from 'lucide-react';
 import { getInstrument } from '@/data/instruments';
 import { fmtINR, fmtNum, uid } from '@/lib/format';
 import {
-  LEVERAGE_MULT,
-  leveragesForExchange,
-  type Leverage,
   type OrderSide,
   type OrderType,
   type Position,
@@ -19,51 +16,141 @@ interface TradePanelProps {
   contract?: any; // Rich contract object from DB (exchange, name, lotsize, etc.)
 }
 
-const LEV_MULT = LEVERAGE_MULT;
+const RENDER_WS_URL = "wss://myt-backend-ghpx.onrender.com/ws";
 
 export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, contract }: TradePanelProps) {
-  // Fallback to static instrument finder or use contract metadata if available
   const staticInst = getInstrument(symbol);
   
-  const exchange = contract?.exchange || staticInst?.exchange || 'NSE';
+  const exchange = contract?.exchange || contract?.exch_seg || staticInst?.exchange || 'NSE';
   const name = contract?.name || staticInst?.name || symbol;
   const lotSize = Number(contract?.lotsize || 1);
+  const instrumentKey = contract?.instrumentKey || contract?.token || '';
 
-  const availableLevs = leveragesForExchange(exchange);
-  const [leverage, setLeverage] = useState<Leverage>(availableLevs[availableLevs.length - 1]);
+  // 🌟 1. Dynamic Leverage Options based on Exchange (Android App Logic Parity)
+  const isMcx = exchange.toUpperCase().includes('MCX');
+  const availableLevs = isMcx ? [10, 50, 100, 200, 300, 400, 500] : [1, 3, 5, 7, 8, 10];
+  const defaultLev = isMcx ? 100 : 4;
+
+  const [leverage, setLeverage] = useState<number>(defaultLev);
   const [side, setSide] = useState<OrderSide>('BUY');
   const [orderType, setOrderType] = useState<OrderType>('MARKET');
-  const [limitPrice, setLimitPrice] = useState<string>(fmtNum(livePrice));
-  const [qty, setQty] = useState<string>('1');
+  
+  // Real-time live price state synced with Render WebSocket
+  const [currentLtp, setCurrentLtp] = useState<number>(livePrice || 0);
+  const [limitPrice, setLimitPrice] = useState<string>(fmtNum(livePrice || 0));
+  
+  // 🌟 2. Lot & Quantity States (Matching Android etLot / etQty logic)
+  const [lots, setLots] = useState<string>('1');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Reset leverage to the max allowed whenever the exchange changes.
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // Sync prop livePrice changes
   useEffect(() => {
-    setLeverage(availableLevs[availableLevs.length - 1]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exchange]);
+    if (livePrice > 0) {
+      setCurrentLtp(livePrice);
+      if (orderType === 'MARKET') {
+        setLimitPrice(fmtNum(livePrice));
+      }
+    }
+  }, [livePrice]);
 
-  // keep limit price synced when symbol/price changes & order type is market
-  const effectivePrice = orderType === 'MARKET' ? livePrice : parseFloat(limitPrice) || livePrice;
-  const qtyNum = Math.max(0, Math.floor(parseFloat(qty) || 0));
-  const totalUnits = qtyNum * lotSize;
+  // Direct WebSocket connection inside TradePanel to guarantee live price streaming
+  useEffect(() => {
+    function connectWS() {
+      const ws = new WebSocket(RENDER_WS_URL);
+      wsRef.current = ws;
 
-  const mult = LEV_MULT[leverage];
-  const notional = effectivePrice * totalUnits;
-  const margin = notional / mult;
+      ws.onopen = () => {
+        const keys = [instrumentKey, symbol].filter(Boolean);
+        const tokens = [contract?.token].filter(Boolean);
+        ws.send(JSON.stringify({
+          action: "sub",
+          guid: "tradepanel_live_sub",
+          instrumentKeys: keys,
+          tokens: tokens
+        }));
+      };
 
-  const maxQtyByBalance = useMemo(() => {
-    if (!walletBalance || effectivePrice <= 0) return 0;
-    const maxUnits = Math.floor((walletBalance * mult) / effectivePrice);
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "initial_ltps" && data.data) {
+            const val = data.data[instrumentKey] || data.data[symbol] || data.data[contract?.token];
+            if (val) setCurrentLtp(Number(val));
+          } else {
+            const key = data.instrument_key || data.instrumentKey || data.token || data.symbol || "";
+            const ltpVal = data.ltp || data.price || data.last_price || 0;
+            if (key && ltpVal) {
+              if (key === symbol || key === instrumentKey || key === contract?.token || key.includes(symbol)) {
+                setCurrentLtp(Number(ltpVal));
+              }
+            }
+          }
+        } catch (e) {
+          console.error("TradePanel WS parse error:", e);
+        }
+      };
+
+      ws.onclose = () => {
+        setTimeout(connectWS, 3000);
+      };
+    }
+
+    connectWS();
+    return () => {
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, [symbol, instrumentKey, contract]);
+
+  // Reset leverage whenever exchange changes
+  useEffect(() => {
+    setLeverage(isMcx ? 100 : 4);
+  }, [exchange, isMcx]);
+
+  const effectivePrice = orderType === 'MARKET' ? currentLtp : parseFloat(limitPrice) || currentLtp;
+  
+  // 🌟 3. Lot Size & Quantity Calculation Logic (Android App Parity)
+  const lotsNum = Math.max(1, parseInt(lots, 10) || 1);
+  const totalUnits = lotsNum * lotSize;
+
+  // 🌟 4. Gold Scale Factor Logic (Android getGoldScaleFactor Parity)
+  function getGoldScaleFactor(sym: string): number {
+    const symUpper = sym.toUpperCase();
+    if (symUpper.includes("GOLDM")) return 1.0;
+    if (symUpper.includes("GOLD")) return 1000.0;
+    return 1.0;
+  }
+
+  // 🌟 5. Advanced Scaled Margin Calculation Logic (Matching SymbolDetailsActivity calculateMargin)
+  const notional = useMemo(() => {
+    const symUpper = symbol.toUpperCase();
+    if (symUpper.includes("GOLD") || symUpper.includes("GOLDM")) {
+      const scaleFactor = getGoldScaleFactor(symbol);
+      return (effectivePrice / 10.0) * totalUnits * scaleFactor;
+    }
+    return effectivePrice * totalUnits;
+  }, [symbol, effectivePrice, totalUnits]);
+
+  const margin = notional / leverage;
+
+  const maxLotsByBalance = useMemo(() => {
+    if (!walletBalance || effectivePrice <= 0) return 100;
+    const symUpper = symbol.toUpperCase();
+    let unitCost = effectivePrice;
+    if (symUpper.includes("GOLD") || symUpper.includes("GOLDM")) {
+      unitCost = (effectivePrice / 10.0) * getGoldScaleFactor(symbol);
+    }
+    const maxUnits = Math.floor((walletBalance * leverage) / unitCost);
     return Math.max(1, Math.floor(maxUnits / lotSize));
-  }, [walletBalance, mult, effectivePrice, lotSize]);
+  }, [walletBalance, leverage, effectivePrice, lotSize, symbol]);
 
   function handleSubmit() {
     setError(null);
     setSuccess(null);
-    if (qtyNum <= 0) {
-      setError('Enter a valid quantity / lots.');
+    if (lotsNum <= 0) {
+      setError('Enter a valid lots quantity.');
       return;
     }
     if (margin > walletBalance) {
@@ -84,13 +171,13 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
       side,
       qty: totalUnits,
       entryPrice: effectivePrice,
-      leverage,
+      leverage: `${leverage}x` as any,
       margin,
       currentPrice: effectivePrice,
     };
     onOpenPosition(pos);
     setSuccess(
-      `${side} ${totalUnits} units (${qtyNum} lots) of ${symbol} @ ${fmtNum(effectivePrice)} (${leverage}) placed.`
+      `${side} ${totalUnits} units (${lotsNum} lots) of ${symbol} @ ${fmtNum(effectivePrice)} (${leverage}x) placed.`
     );
     setTimeout(() => setSuccess(null), 3500);
   }
@@ -115,9 +202,12 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
           </div>
           <div className="text-right shrink-0">
             <div className="font-mono text-base font-semibold text-white">
-              {fmtNum(livePrice)}
+              {fmtNum(currentLtp)}
             </div>
-            <div className="text-[11px] text-emerald-400 font-mono">▲ Live LTP</div>
+            <div className="text-[11px] text-emerald-400 font-mono flex items-center justify-end gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Live LTP
+            </div>
           </div>
         </div>
       </div>
@@ -183,31 +273,35 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
         </div>
       )}
 
-      {/* Quantity / Lots */}
-      <div className="mb-4">
-        <label className="mb-1 block text-[11px] uppercase tracking-wider text-gray-500">
-          Lots / Quantity {lotSize > 1 ? `(1 Lot = ${lotSize})` : ''}
-        </label>
-        <input
-          type="number"
-          min="1"
-          value={qty}
-          onChange={(e) => setQty(e.target.value)}
-          className="w-full rounded-lg border border-white/5 bg-black/40 px-3 py-2 font-mono text-sm text-white focus:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent/30"
-        />
-        <div className="mt-1 flex items-center justify-between text-[11px] text-gray-500">
-          <span>Max Lots: {maxQtyByBalance.toLocaleString('en-IN')}</span>
-          <button
-            type="button"
-            onClick={() => setQty(String(Math.max(1, Math.floor(maxQtyByBalance / 4))))}
-            className="text-accent hover:underline cursor-pointer"
-          >
-            25%
-          </button>
+      {/* Quantity / Lots (Matching etLot & etQty app logic) */}
+      <div className="mb-4 grid grid-cols-2 gap-3">
+        <div>
+          <label className="mb-1 block text-[11px] uppercase tracking-wider text-gray-500">
+            Lots
+          </label>
+          <input
+            type="number"
+            min="1"
+            value={lots}
+            onChange={(e) => setLots(e.target.value)}
+            className="w-full rounded-lg border border-white/5 bg-black/40 px-3 py-2 font-mono text-sm text-white focus:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent/30 text-center font-bold"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] uppercase tracking-wider text-gray-500">
+            Total Qty (Units)
+          </label>
+          <div className="w-full rounded-lg border border-gold/30 bg-gold/10 px-3 py-2 font-mono text-sm text-gold text-center font-bold flex items-center justify-center">
+            {totalUnits.toLocaleString('en-IN')}
+          </div>
         </div>
       </div>
+      <div className="mb-4 -mt-2 flex items-center justify-between text-[11px] text-gray-500">
+        <span>Max Lots: {maxLotsByBalance.toLocaleString('en-IN')}</span>
+        <span className="text-gray-400">1 Lot = {lotSize}</span>
+      </div>
 
-      {/* Leverage */}
+      {/* Leverage Selection (Dynamic based on MCX / App Logic) */}
       <div className="mb-4">
         <div className="mb-1.5 flex items-center justify-between">
           <div className="flex items-center gap-1.5">
@@ -215,7 +309,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
             <span className="text-[11px] uppercase tracking-wider text-gray-500">Leverage</span>
           </div>
           <span className="text-[10px] text-gray-600">
-            {exchange === 'MCX' ? 'Commodity · up to 500X' : 'Equity/FO · up to 10X'}
+            {isMcx ? 'Commodity · up to 500X' : 'Equity/FO · up to 10X'}
           </span>
         </div>
         <div className={`grid gap-1.5 ${availableLevs.length > 6 ? 'grid-cols-4' : 'grid-cols-3'}`}>
@@ -230,7 +324,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
                   : 'bg-black/40 text-gray-400 hover:text-gold border border-white/5'
               }`}
             >
-              {l}
+              {l}x
             </button>
           ))}
         </div>
@@ -241,7 +335,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
         <Row label="Total Units / Size" value={`${totalUnits.toLocaleString('en-IN')}`} />
         <Row label="Notional Value" value={fmtINR(notional)} />
         <Row
-          label={`Margin (${leverage})`}
+          label={`Margin (${leverage}x)`}
           value={fmtINR(margin)}
           highlight={insufficient ? 'text-rose-400' : 'text-white'}
         />
@@ -264,7 +358,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
       <button
         type="button"
         onClick={handleSubmit}
-        disabled={insufficient || qtyNum <= 0}
+        disabled={insufficient || lotsNum <= 0}
         className={`w-full rounded-xl py-3.5 text-sm font-bold transition-all cursor-pointer ${
           side === 'BUY'
             ? 'bg-emerald-500 text-white hover:bg-emerald-400 disabled:opacity-40'
