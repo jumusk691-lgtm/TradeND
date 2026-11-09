@@ -4,7 +4,6 @@ import { DERIVATIVE_CONTRACTS } from '@/data/derivatives';
 import { CandleChart } from '@/components/CandleChart';
 import { ContractBrowser } from '@/components/ContractBrowser';
 import { TradePanel } from '@/components/TradePanel';
-import { WatchlistPanel } from '@/components/WatchlistPanel';
 import { PositionsPanel } from '@/components/PositionsPanel';
 import { WalletPanel } from '@/components/WalletPanel';
 import { Navbar } from '@/components/Navbar';
