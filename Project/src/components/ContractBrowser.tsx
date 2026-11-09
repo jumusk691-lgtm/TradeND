@@ -83,6 +83,7 @@ export function ContractBrowser({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const pendingKeysRef = useRef<{ keys: string[]; tokens: string[] }>({ keys: [], tokens: [] });
 
   // 1. Initialize SQLite Database from Supabase DB File URL
   useEffect(() => {
@@ -124,6 +125,14 @@ export function ContractBrowser({
 
       ws.onopen = () => {
         console.log("🟢 Connected to Render Live WebSocket");
+        // Automatically send pending subscription keys once WS opens successfully
+        if (pendingKeysRef.current.keys.length > 0 && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            instrumentKeys: pendingKeysRef.current.keys,
+            tokens: pendingKeysRef.current.tokens
+          }));
+          console.log(`📡 Sent ${pendingKeysRef.current.keys.length} keys on WS open.`);
+        }
       };
 
       ws.onmessage = (event) => {
@@ -132,7 +141,12 @@ export function ContractBrowser({
           if (data.type === "initial_ltps" && data.data) {
             setLivePrices(prev => ({ ...prev, ...data.data }));
           } else if (data.instrument_key && data.ltp) {
-            setLivePrices(prev => ({ ...prev, [data.instrument_key]: data.ltp, [data.token]: data.ltp }));
+            setLivePrices(prev => ({ 
+              ...prev, 
+              [data.instrument_key]: data.ltp, 
+              [data.token]: data.ltp,
+              [data.instrument_key.split('|')[1]]: data.ltp 
+            }));
           } else if (data.token && data.ltp) {
             setLivePrices(prev => ({ ...prev, [data.token]: data.ltp }));
           } else {
@@ -240,14 +254,19 @@ export function ContractBrowser({
 
         setRawContracts(parsed);
 
-        // Send tokens & keys to Render WebSocket for live prices
+        const keys = parsed.map((p: any) => p.instrumentKey);
+        const tokens = parsed.map((p: any) => p.token);
+        
+        // Save keys in ref so onopen can send them if connection is established
+        pendingKeysRef.current = { keys, tokens };
+
+        // Send tokens & keys to Render WebSocket if already open
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          const keys = parsed.map((p: any) => p.instrumentKey);
-          const tokens = parsed.map((p: any) => p.token);
           wsRef.current.send(JSON.stringify({ instrumentKeys: keys, tokens: tokens }));
         }
       } else {
         setRawContracts([]);
+        pendingKeysRef.current = { keys: [], tokens: [] };
       }
     } catch (e) {
       console.error('Query error:', e);
@@ -387,6 +406,7 @@ export function ContractBrowser({
                   livePrices[contract.instrumentKey] || 
                   livePrices[contract.token] || 
                   livePrices[contract.symbol] || 
+                  livePrices[contract.token] || 
                   "0.00";
                 
                 return (
@@ -411,7 +431,7 @@ export function ContractBrowser({
                         </span>
                       </div>
                       
-                      {/* Clean Meta: Exchange, Expiry, Strike & Lot Size (No Token shown to user) */}
+                      {/* Clean Meta: Exchange, Expiry, Strike & Lot Size */}
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
                         <span className="text-gold font-medium">{contract.exchange}</span>
                         {contract.expiry && (
