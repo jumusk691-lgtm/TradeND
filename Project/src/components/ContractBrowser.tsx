@@ -2,9 +2,8 @@ import { ChevronDown, Plus, Search, Star, BarChart2 } from 'lucide-react';
 import { useMemo, useState, useEffect, useRef } from 'react';
 import type { DerivativeKind, Exchange } from '@/types';
 
-// 👉 Supabase DB File URL & Render WS URL
+// 👉 Supabase DB File URL (Direct Database Access for Symbols)
 const DB_FILE_URL = "https://fnfynhgkdevxytxtfzrk.supabase.co/storage/v1/object/public/myt/angel_master.db";
-const RENDER_WS_URL = "wss://myt-backend-ghpx.onrender.com/ws";
 
 interface ContractBrowserProps {
   selected: string;
@@ -38,24 +37,48 @@ function formatExpiryDate(rawExpiry: string): string {
   return rawExpiry;
 }
 
-// Format Symbol Names
+// 🔤 Android APK Exact Symbol Name Formatter Equivalent
 function formatSymbolName(rawSymbol: string): string {
-  if (!rawSymbol) return '';
-  const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
-  for (const m of monthNames) {
-    if (rawSymbol.toUpperCase().includes(m)) return rawSymbol;
-  }
-  const match2 = rawSymbol.match(/^([A-Za-z]+)(\d{2})(1[0-2])(\d{2})(.*)$/);
-  if (match2) {
-    const [, prefix, yy, mm, dd, rest] = match2;
-    const monthStr = monthNames[parseInt(mm, 10) - 1];
-    return `${prefix.toUpperCase()}${yy}${monthStr}${dd}${rest}`;
-  }
-  const match1 = rawSymbol.match(/^([A-Za-z]+)(\d{2})([1-9])(\d{2})(.*)$/);
-  if (match1) {
-    const [, prefix, yy, mm, dd, rest] = match1;
-    const monthStr = monthNames[parseInt(mm, 10) - 1];
-    return `${prefix.toUpperCase()}${yy}${monthStr}${dd}${rest}`;
+  try {
+    if (!rawSymbol) return '';
+    const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    const upper = rawSymbol.toUpperCase();
+
+    for (const m of monthNames) {
+      if (upper.includes(m)) return rawSymbol;
+    }
+
+    // 1. Match 2-digit month (10, 11, 12) e.g., NIFTY26101221600CE
+    const match2 = upper.match(/^([A-Z]+)(\d{2})(1[0-2])(\d{2})(.*)$/);
+    if (match2) {
+      const [, prefix, yy, mm, dd, rest] = match2;
+      const monthStr = monthNames[parseInt(mm, 10) - 1];
+      const paddedDay = dd.length === 1 ? `0${dd}` : dd;
+      return `${prefix}${yy}${monthStr}${paddedDay}${rest}`;
+    }
+
+    // 2. Match 1-digit month (1..9) e.g., NIFTY2681121600CE
+    const match1 = upper.match(/^([A-Z]+)(\d{2})([1-9])(\d{2})(.*)$/);
+    if (match1) {
+      const [, prefix, yy, mm, dd, rest] = match1;
+      const monthStr = monthNames[parseInt(mm, 10) - 1];
+      const paddedDay = dd.length === 1 ? `0${dd}` : dd;
+      return `${prefix}${yy}${monthStr}${paddedDay}${rest}`;
+    }
+
+    // 3. Match single letter month code (O=Oct, N=Nov, D=Dec)
+    const matchLetter = upper.match(/^([A-Z]+)(\d{2})([OND])(\d{2})(.*)$/);
+    if (matchLetter) {
+      const [, prefix, yy, mLetter, dd, rest] = matchLetter;
+      const mMap: Record<string, string> = { O: "OCT", N: "NOV", D: "DEC" };
+      const monthStr = mMap[mLetter] || "";
+      if (monthStr) {
+        const paddedDay = dd.length === 1 ? `0${dd}` : dd;
+        return `${prefix}${yy}${monthStr}${paddedDay}${rest}`;
+      }
+    }
+  } catch (e) {
+    console.error("Format symbol error:", e);
   }
   return rawSymbol;
 }
@@ -113,17 +136,21 @@ export function ContractBrowser({
     initDatabase();
   }, []);
 
-  // 2. Direct Render WebSocket Connection matching APK streaming engine
+  // 2. Local Dynamic WebSocket Connection (Updated to send Watchlist keys dynamically)
   useEffect(() => {
     function connectWS() {
-      const ws = new WebSocket(RENDER_WS_URL);
+      if (typeof window === 'undefined') return;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log("🟢 ContractBrowser Connected to Render WS Engine");
+        console.log("🟢 Connected to Live WebSocket");
         
-        const watchKeys = watchlist.map((w: any) => w.instrumentKey || w.token).filter(Boolean);
-        const watchTokens = watchlist.map((w: any) => w.token || w.instrumentKey).filter(Boolean);
+        const watchKeys = watchlist.map((w: any) => w.instrumentKey).filter(Boolean);
+        const watchTokens = watchlist.map((w: any) => w.token).filter(Boolean);
         
         const searchKeys = pendingKeysRef.current.keys;
         const searchTokens = pendingKeysRef.current.tokens;
@@ -133,8 +160,6 @@ export function ContractBrowser({
 
         if (combinedKeys.length > 0 && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
-            action: "sub",
-            guid: "upstox_sub_request",
             instrumentKeys: combinedKeys,
             tokens: combinedTokens
           }));
@@ -157,7 +182,7 @@ export function ContractBrowser({
     };
   }, [watchlist]);
 
-  // 3. Query Symbols directly from local SQLite database instance
+  // 3. Query Symbols directly from local SQLite database instance matching APK logic
   const loadSymbolsFromDb = (db: any, exFilter: string, kindFilter: string, searchQuery: string) => {
     try {
       setLoading(true);
@@ -222,11 +247,14 @@ export function ContractBrowser({
           const exactSeg = seg || 'NSE';
           const instrumentKey = `${exactSeg}|${tokenVal}`;
 
+          const rawName = rowData.name ? String(rowData.name) : '';
+          const formattedName = formatSymbolName(rawName.trim() !== '' ? rawName : sym);
+
           return {
             token: tokenVal,
             instrumentKey: instrumentKey,
             symbol: sym,
-            name: rowData.name ? formatSymbolName(String(rowData.name)) : sym,
+            name: formattedName,
             exchange: exch,
             kind: inferredKind,
             rawExpiry: rawExp,
@@ -244,13 +272,11 @@ export function ContractBrowser({
         
         pendingKeysRef.current = { keys, tokens };
 
-        const watchKeys = watchlist.map((w: any) => w.instrumentKey || w.token).filter(Boolean);
+        const watchKeys = watchlist.map((w: any) => w.instrumentKey).filter(Boolean);
         const combinedKeys = Array.from(new Set([...keys, ...watchKeys]));
 
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({ 
-            action: "sub",
-            guid: "upstox_sub_request",
             instrumentKeys: combinedKeys, 
             tokens: tokens 
           }));
@@ -488,5 +514,4 @@ export function ContractBrowser({
   );
 }
 
-// 👉 Mandatory Default Export to prevent Rollup/Vercel Build Error
 export default ContractBrowser;
