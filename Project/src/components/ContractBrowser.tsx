@@ -1,15 +1,18 @@
 import { ChevronDown, Plus, Search, Star } from 'lucide-react';
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { fmtNum, fmtPct } from '@/lib/format';
 import type { DerivativeKind, Exchange } from '@/types';
 
-// Single Source of Truth: Centralized Render Backend API URL for Symbols, Watchlist, Positions & Charts
-const RENDER_API_URL = "https://myt-backend-1.onrender.com";
+// 👉 Supabase DB File URL (Direct Database Access for Symbols)
+const DB_FILE_URL = "https://fnfynhgkdevxytxtfzrk.supabase.co/storage/v1/object/public/myt/angel_master.db";
+
+// 👉 Render WebSocket URL for Live LTP streaming
+const RENDER_WS_URL = "wss://myt-backend-1.onrender.com/ws";
 
 interface ContractBrowserProps {
   selected: string;
   onSelect: (symbol: string) => void;
-  onAddWatch: (symbol: string) => void;
+  onAddWatch: (contract: any) => void;
   watchlist: string[];
 }
 
@@ -37,7 +40,7 @@ function formatExpiryDate(rawExpiry: string): string {
   return rawExpiry;
 }
 
-// Format Symbol Names (e.g. NIFTY26NOV25000CE)
+// Format Symbol Names
 function formatSymbolName(rawSymbol: string): string {
   if (!rawSymbol) return '';
   const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
@@ -71,98 +74,198 @@ export function ContractBrowser({
   const [selectedExpiry, setSelectedExpiry] = useState<string>('ALL');
   const [expanded, setExpanded] = useState(true);
 
+  const [dbInstance, setDbInstance] = useState<any>(null);
   const [rawContracts, setRawContracts] = useState<any[]>([]);
+  const [livePrices, setLivePrices] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Fetch Live Symbols from Render Backend API
-  const fetchSymbolsFromRender = async (exFilter: string, kindFilter: string, searchQuery: string) => {
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // 1. Initialize SQLite Database from Supabase DB File URL
+  useEffect(() => {
+    async function initDatabase() {
+      try {
+        setLoading(true);
+        setErrorMsg(null);
+
+        const response = await fetch(DB_FILE_URL, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`DB Fetch failed: ${response.statusText}`);
+        const arrayBuffer = await response.arrayBuffer();
+
+        //@ts-ignore
+        const initSqlJs = window.initSqlJs;
+        if (!initSqlJs) throw new Error('SQL.js not loaded in index.html');
+
+        const SQL = await initSqlJs({
+          locateFile: (file: string) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+        });
+
+        const db = new SQL.Database(new Uint8Array(arrayBuffer));
+        setDbInstance(db);
+        loadSymbolsFromDb(db, 'NSE', 'ALL', '');
+      } catch (err: any) {
+        console.error('DB Init Error:', err);
+        setErrorMsg(err?.message || 'Failed to load database');
+        setLoading(false);
+      }
+    }
+
+    initDatabase();
+  }, []);
+
+  // 2. Establish WebSocket Connection to Render for Live Prices
+  useEffect(() => {
+    function connectWS() {
+      const ws = new WebSocket(RENDER_WS_URL);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log("🟢 Connected to Render Live WebSocket");
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "initial_ltps" && data.data) {
+            setLivePrices(prev => ({ ...prev, ...data.data }));
+          } else if (data.instrument_key && data.ltp) {
+            setLivePrices(prev => ({ ...prev, [data.instrument_key]: data.ltp }));
+          }
+        } catch (e) {
+          console.error("WS Parse error:", e);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error("WS Error:", err);
+      };
+
+      ws.onclose = () => {
+        setTimeout(connectWS, 3000);
+      };
+    }
+
+    connectWS();
+
+    return () => {
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, []);
+
+  // 3. Query Symbols directly from local SQLite database instance
+  const loadSymbolsFromDb = (db: any, exFilter: string, kindFilter: string, searchQuery: string) => {
     try {
       setLoading(true);
-      setErrorMsg(null);
-
-      const params = new URLSearchParams({
-        exchange: exFilter,
-        kind: kindFilter,
-        search: searchQuery
-      });
-
-      const response = await fetch(`${RENDER_API_URL}/api/symbols?${params.toString()}`);
+      let sql = `SELECT token, symbol, exch_seg, strike, expiry, name, lotsize, tick_size, instrumenttype FROM symbols WHERE 1=1`;
       
-      if (!response.ok) {
-        throw new Error(`Render API Error: ${response.statusText}`);
+      if (exFilter !== 'ALL') {
+        if (exFilter === 'NSE') sql += ` AND (exch_seg IN ('NSE', 'NFO', 'NSE_EQ', 'NSE_FO') OR exch_seg LIKE 'NSE%')`;
+        else if (exFilter === 'BSE') sql += ` AND (exch_seg IN ('BSE', 'BFO', 'BSE_EQ', 'BSE_FO') OR exch_seg LIKE 'BSE%')`;
+        else if (exFilter === 'MCX') sql += ` AND (exch_seg IN ('MCX', 'MCX_FO') OR exch_seg LIKE 'MCX%')`;
       }
 
-      const data = await response.json();
-      const symbolList = Array.isArray(data) ? data : (data.symbols || data.data || []);
+      if (kindFilter === 'CE') {
+        sql += ` AND (symbol LIKE '%CE' OR instrumenttype LIKE '%CE%' OR (instrumenttype LIKE '%OPT%' AND symbol NOT LIKE '%PE'))`;
+      } else if (kindFilter === 'PE') {
+        sql += ` AND (symbol LIKE '%PE' OR instrumenttype LIKE '%PE%')`;
+      } else if (kindFilter === 'FUT') {
+        sql += ` AND (instrumenttype LIKE '%FUT%' OR symbol LIKE '%FUT%' OR instrumenttype LIKE '%COM%' OR (strike IS NULL OR strike = '' OR strike = '0.0')) AND symbol NOT LIKE '%CE' AND symbol NOT LIKE '%PE'`;
+      }
 
-      const parsed = symbolList.map((item: any) => {
-        const rawSym = item.symbol ? String(item.symbol) : '';
-        const sym = formatSymbolName(rawSym);
+      if (searchQuery.trim() !== '') {
+        const rawInput = searchQuery.trim().toUpperCase();
+        const letters = rawInput.replace(/[^A-Z]/g, '');
+        const digits = rawInput.replace(/[^0-9]/g, '');
 
-        let inferredKind: DerivativeKind = 'FUT';
-        if (sym.endsWith('CE') || String(item.instrumenttype || item.kind || '').includes('CE')) inferredKind = 'CE';
-        else if (sym.endsWith('PE') || String(item.instrumenttype || item.kind || '').includes('PE')) inferredKind = 'PE';
-        else if (sym.includes('FUT') || String(item.instrumenttype || item.kind || '').includes('FUT')) inferredKind = 'FUT';
+        if (letters.length > 0 && digits.length > 0) {
+          sql += ` AND ((symbol LIKE '%${letters}%' OR name LIKE '%${letters}%') AND (symbol LIKE '%${digits}%' OR strike LIKE '%${digits}%' OR name LIKE '%${digits}%'))`;
+        } else if (letters.length > 0) {
+          sql += ` AND (symbol LIKE '%${letters}%' OR name LIKE '%${letters}%')`;
+        } else if (digits.length > 0) {
+          sql += ` AND (symbol LIKE '%${digits}%' OR strike LIKE '%${digits}%' OR name LIKE '%${digits}%')`;
+        }
+      }
 
-        let exch: Exchange = 'NSE';
-        const seg = String(item.exch_seg || item.exchange || '').toUpperCase();
-        if (seg.includes('BSE') || seg.includes('BFO')) exch = 'BSE';
-        else if (seg.includes('MCX')) exch = 'MCX';
+      sql += ` ORDER BY expiry ASC LIMIT 400;`;
 
-        const rawExp = item.expiry ? String(item.expiry) : '';
+      const res = db.exec(sql);
+      if (res.length > 0) {
+        const columns = res[0].columns;
+        const values = res[0].values;
 
-        return {
-          token: String(item.token || ''),
-          symbol: sym,
-          name: item.name ? formatSymbolName(String(item.name)) : sym,
-          exchange: exch,
-          kind: inferredKind,
-          rawExpiry: rawExp,
-          expiry: formatExpiryDate(rawExp),
-          strike: item.strike && item.strike !== '0.0' ? Number(item.strike) : undefined,
-          price: item.price ? Number(item.price) : 100.0,
-          changePct: item.changePct ? Number(item.changePct) : 0.0,
-          lotsize: String(item.lotsize || '1'),
-          tick_size: String(item.tick_size || '0.05')
-        };
-      });
+        const parsed = values.map((row: any) => {
+          const rowData: Record<string, any> = {};
+          columns.forEach((col: string, idx: number) => {
+            rowData[col] = row[idx];
+          });
 
-      setRawContracts(parsed);
-    } catch (err: any) {
-      console.error('Fetch error from Render backend:', err);
-      setErrorMsg(err?.message || 'Failed to fetch symbols from Render backend');
-      setRawContracts([]);
+          const rawSym = rowData.symbol ? String(rowData.symbol) : '';
+          const sym = formatSymbolName(rawSym);
+
+          let inferredKind: DerivativeKind = 'FUT';
+          if (sym.endsWith('CE') || String(rowData.instrumenttype || '').includes('CE')) inferredKind = 'CE';
+          else if (sym.endsWith('PE') || String(rowData.instrumenttype || '').includes('PE')) inferredKind = 'PE';
+          else if (sym.includes('FUT') || String(rowData.instrumenttype || '').includes('FUT') || String(rowData.instrumenttype || '').includes('COM')) inferredKind = 'FUT';
+
+          let exch: Exchange = 'NSE';
+          const seg = String(rowData.exch_seg || '').toUpperCase();
+          if (seg.includes('BSE') || seg.includes('BFO')) exch = 'BSE';
+          else if (seg.includes('MCX')) exch = 'MCX';
+
+          const rawExp = rowData.expiry ? String(rowData.expiry) : '';
+          const tokenVal = String(rowData.token || '');
+          const instrumentKey = `${seg}|${tokenVal}`;
+
+          return {
+            token: tokenVal,
+            instrumentKey: instrumentKey,
+            symbol: sym,
+            name: rowData.name ? formatSymbolName(String(rowData.name)) : sym,
+            exchange: exch,
+            kind: inferredKind,
+            rawExpiry: rawExp,
+            expiry: formatExpiryDate(rawExp),
+            strike: rowData.strike && rowData.strike !== '0.0' ? Number(rowData.strike) : undefined,
+            lotsize: String(rowData.lotsize || '1'),
+            tick_size: String(rowData.tick_size || '0.05')
+          };
+        });
+
+        setRawContracts(parsed);
+
+        // Send tokens to Render WebSocket for live prices
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          const keys = parsed.map((p: any) => p.instrumentKey);
+          wsRef.current.send(JSON.stringify({ instrumentKeys: keys }));
+        }
+      } else {
+        setRawContracts([]);
+      }
+    } catch (e) {
+      console.error('Query error:', e);
     } finally {
       setLoading(false);
     }
   };
 
-  // Re-fetch when filters or search change with debounce
   useEffect(() => {
-    setSelectedExpiry('ALL');
-    const timer = setTimeout(() => {
-      fetchSymbolsFromRender(exchange, kind, search);
-    }, 300);
+    if (dbInstance) {
+      setSelectedExpiry('ALL');
+      loadSymbolsFromDb(dbInstance, exchange, kind, search);
+    }
+  }, [exchange, kind, search, dbInstance]);
 
-    return () => clearTimeout(timer);
-  }, [exchange, kind, search]);
-
-  // Expiries List sorted chronologically
   const availableExpiries = useMemo(() => {
     const expMap = new Map<string, string>();
     rawContracts.forEach(c => {
-      if (c.rawExpiry && c.expiry) {
-        expMap.set(c.rawExpiry, c.expiry);
-      }
+      if (c.rawExpiry && c.expiry) expMap.set(c.rawExpiry, c.expiry);
     });
-
     return Array.from(expMap.entries())
       .map(([raw, formatted]) => ({ raw, formatted }))
       .sort((a, b) => a.raw.localeCompare(b.raw));
   }, [rawContracts]);
 
-  // Filtered Contracts by Selected Expiry
   const contracts = useMemo(() => {
     if (selectedExpiry === 'ALL') return rawContracts;
     return rawContracts.filter(c => c.rawExpiry === selectedExpiry);
@@ -178,7 +281,7 @@ export function ContractBrowser({
               <h2 className="font-display text-lg font-bold text-white">Options &amp; Futures</h2>
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              Live data stream via Render backend API
+              Supabase DB symbols &amp; Render WebSocket LTP Stream
             </p>
           </div>
           <button
@@ -221,7 +324,7 @@ export function ContractBrowser({
               </div>
             </div>
 
-            {/* Broker Style Expiry Select Dropdown */}
+            {/* Expiry Dropdown */}
             <div className="mt-3 flex items-center gap-2">
               <div className="text-xs text-gray-400 font-semibold">Expiry:</div>
               <select
@@ -259,7 +362,7 @@ export function ContractBrowser({
           </div>
 
           {loading ? (
-            <div className="py-8 text-center text-xs text-gray-400">Fetching live data from Render backend...</div>
+            <div className="py-8 text-center text-xs text-gray-400">Loading contracts from DB...</div>
           ) : errorMsg ? (
             <div className="py-8 text-center text-xs text-rose-400">Error: {errorMsg}</div>
           ) : (
@@ -267,7 +370,8 @@ export function ContractBrowser({
               {contracts.map((contract) => {
                 const selectedContract = selected === contract.symbol;
                 const watched = watchlist.includes(contract.symbol);
-                const up = (contract.changePct ?? 0) >= 0;
+                const currentPrice = livePrices[contract.instrumentKey] || livePrices[contract.token] || "0.00";
+                
                 return (
                   <div
                     key={contract.token || contract.symbol}
@@ -306,15 +410,15 @@ export function ContractBrowser({
 
                     <div className="text-right">
                       <div className="font-mono text-sm font-semibold text-white">
-                        {fmtNum(contract.price)}
+                        {fmtNum(Number(currentPrice))}
                       </div>
-                      <div className={`font-mono text-[11px] ${up ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {up ? '▲' : '▼'} {fmtPct(contract.changePct ?? 0)}
+                      <div className="font-mono text-[11px] text-emerald-400">
+                        ▲ Live LTP
                       </div>
                     </div>
 
                     <button
-                      onClick={() => onAddWatch(contract.symbol)}
+                      onClick={() => onAddWatch(contract)}
                       className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border ${
                         watched ? 'border-gold/30 bg-gold/10 text-gold' : 'border-white/5 text-gray-600'
                       }`}
