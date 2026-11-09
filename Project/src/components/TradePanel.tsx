@@ -16,17 +16,18 @@ interface TradePanelProps {
   contract?: any; // Rich contract object from DB (exchange, name, lotsize, etc.)
 }
 
-const RENDER_WS_URL = "wss://myt-backend-1.onrender.com/ws";
+const RENDER_WS_URL = "wss://myt-backend-ghpx.onrender.com/ws";
 
 export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, contract }: TradePanelProps) {
   const staticInst = getInstrument(symbol);
   
+  // 🌟 Exchange, Name & Lot Size Extraction matching Android APK logic
   const exchange = contract?.exchange || contract?.exch_seg || staticInst?.exchange || 'NSE';
   const name = contract?.name || staticInst?.name || symbol;
-  const lotSize = Number(contract?.lotsize || 1);
+  const lotSize = Number(contract?.lotsize || contract?.lotSize || staticInst?.lotSize || 1);
   const instrumentKey = contract?.instrumentKey || contract?.token || '';
 
-  // 🌟 1. Dynamic Leverage Options based on Exchange (Android App Logic Parity)
+  // 🌟 Dynamic Leverage Options based on Exchange (Android App Logic Parity)
   const isMcx = exchange.toUpperCase().includes('MCX');
   const availableLevs = isMcx ? [10, 50, 100, 200, 300, 400, 500] : [1, 3, 5, 7, 8, 10];
   const defaultLev = isMcx ? 100 : 4;
@@ -39,7 +40,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
   const [currentLtp, setCurrentLtp] = useState<number>(livePrice || 0);
   const [limitPrice, setLimitPrice] = useState<string>(fmtNum(livePrice || 0));
   
-  // 🌟 2. Lot & Quantity States (Matching Android etLot / etQty logic)
+  // 🌟 Lots state (Android etLot / etQty parity)
   const [lots, setLots] = useState<string>('1');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -111,11 +112,11 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
 
   const effectivePrice = orderType === 'MARKET' ? currentLtp : parseFloat(limitPrice) || currentLtp;
   
-  // 🌟 3. Lot Size & Quantity Calculation Logic (Android App Parity)
+  // 🌟 MULTIPLICATION LOGIC: Lots multiplied by LotSize = Total Units (Android App Parity)
   const lotsNum = Math.max(1, parseInt(lots, 10) || 1);
   const totalUnits = lotsNum * lotSize;
 
-  // 🌟 4. Gold Scale Factor Logic (Android getGoldScaleFactor Parity)
+  // 🌟 Gold Scale Factor Logic (Android getGoldScaleFactor Parity)
   function getGoldScaleFactor(sym: string): number {
     const symUpper = sym.toUpperCase();
     if (symUpper.includes("GOLDM")) return 1.0;
@@ -123,7 +124,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
     return 1.0;
   }
 
-  // 🌟 5. Advanced Scaled Margin Calculation Logic (Matching SymbolDetailsActivity calculateMargin)
+  // 🌟 Advanced Scaled Margin Calculation Logic (Matching SymbolDetailsActivity calculateMargin)
   const notional = useMemo(() => {
     const symUpper = symbol.toUpperCase();
     if (symUpper.includes("GOLD") || symUpper.includes("GOLDM")) {
@@ -273,7 +274,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
         </div>
       )}
 
-      {/* Quantity / Lots (Matching etLot & etQty app logic) */}
+      {/* Quantity / Lots (Lots * LotSize multiplication view) */}
       <div className="mb-4 grid grid-cols-2 gap-3">
         <div>
           <label className="mb-1 block text-[11px] uppercase tracking-wider text-gray-500">
@@ -301,7 +302,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
         <span className="text-gray-400">1 Lot = {lotSize}</span>
       </div>
 
-      {/* Leverage Selection (Dynamic based on MCX / App Logic) */}
+      {/* Leverage */}
       <div className="mb-4">
         <div className="mb-1.5 flex items-center justify-between">
           <div className="flex items-center gap-1.5">
