@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Mail, Lock, X } from 'lucide-react';
-import { ref, get } from 'firebase/database';
-import { db } from '@/lib/firebase'; // Ensure your firebase path is correct
+import { ref, get, query, orderByChild, equalTo } from 'firebase/database';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { db, auth } from '@/lib/firebase'; // Ensure your firebase auth & db are exported correctly
 
 interface SignInModalProps {
   isOpen: boolean;
@@ -18,7 +19,7 @@ export function SignInModal({
   onOpenForgot,
   onSuccess,
 }: SignInModalProps) {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState(''); // Can be Email or Mobile
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,11 +30,11 @@ export function SignInModal({
     e.preventDefault();
     setError(null);
 
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanInput = identifier.trim();
     const cleanPass = password.trim();
 
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      setError('Please enter a valid email address.');
+    if (!cleanInput) {
+      setError('Please enter your email or mobile number.');
       return;
     }
     if (!cleanPass) {
@@ -42,45 +43,60 @@ export function SignInModal({
     }
 
     setLoading(true);
+
     try {
-      // Firebase Realtime Database keys cannot contain dots (.)
-      const emailKey = cleanEmail.replace(/\./g, ',');
-      const userRef = ref(db, `users_details/${emailKey}`);
-      const snapshot = await get(userRef);
+      let targetEmail = cleanInput;
 
-      // 1. Check if user node exists in Firebase
-      if (!snapshot.exists()) {
-        setError('Account not found! Please check your email or click Create Account.');
-        setLoading(false);
-        return; // 🛑 Stops execution: Dashboard will NOT open
+      // 🔍 EXACT ANDROID LOGIC: If input is NOT an email, treat it as mobile and find email from RTDB
+      if (!cleanInput.includes('@')) {
+        const usersRef = ref(db, 'users_details');
+        const mobileQuery = query(usersRef, orderByChild('mobile'), equalTo(cleanInput));
+        const snapshot = await get(mobileQuery);
+
+        if (!snapshot.exists()) {
+          setError('No account found with this mobile number.');
+          setLoading(false);
+          return;
+        }
+
+        // Extract email associated with this mobile number
+        let foundEmail = '';
+        snapshot.forEach((childSnapshot) => {
+          const userData = childSnapshot.val();
+          if (userData && userData.email) {
+            foundEmail = userData.email;
+          }
+        });
+
+        if (!foundEmail) {
+          setError('Associated email not found for this mobile number.');
+          setLoading(false);
+          return;
+        }
+        targetEmail = foundEmail;
       }
 
-      const userData = snapshot.val();
+      // 🔐 FIREBASE AUTH SIGN IN (Same as Android performFirebaseLogin)
+      const userCredential = await signInWithEmailAndPassword(auth, targetEmail, cleanPass);
+      const user = userCredential.user;
 
-      // 2. Strict password validation
-      if (!userData.password || String(userData.password) !== cleanPass) {
-        setError('Incorrect password. Please try again.');
-        setLoading(false);
-        return; // 🛑 Stops execution: Dashboard will NOT open
+      if (user) {
+        const emailKey = targetEmail.toLowerCase().replace(/\./g, ',');
+        
+        // Save session tokens securely in localStorage (matching web state)
+        localStorage.setItem('tradend:uid', emailKey);
+        localStorage.setItem('tradend:email', targetEmail);
+        localStorage.setItem('tradend:auth_uid', user.uid);
+
+        // Reset form & trigger dashboard entry
+        setIdentifier('');
+        setPassword('');
+        setError(null);
+        onSuccess();
       }
-
-      // 3. Save isolated session tokens only on successful match
-      localStorage.setItem('tradend:uid', emailKey);
-      localStorage.setItem('tradend:email', cleanEmail);
-      if (userData.name) {
-        localStorage.setItem('tradend:name', userData.name);
-      }
-
-      // Reset form states
-      setEmail('');
-      setPassword('');
-      setError(null);
-
-      // Trigger success navigation to open dashboard
-      onSuccess();
     } catch (err: any) {
       console.error('Sign In Error:', err);
-      setError('Connection error. Failed to verify credentials with Firebase.');
+      setError(err.message || 'Invalid credentials or connection failed.');
     } finally {
       setLoading(false);
     }
@@ -103,23 +119,23 @@ export function SignInModal({
         <div className="mb-6">
           <h2 className="text-xl font-bold text-white">Sign In to Trade</h2>
           <p className="text-xs text-gray-400 mt-1">
-            Enter your registered email &amp; password to access dashboard.
+            Enter your email or mobile number &amp; password to access dashboard.
           </p>
         </div>
 
         <form onSubmit={handleSignIn} className="space-y-4">
           <div>
             <label className="block text-[11px] uppercase tracking-wider text-gray-400 mb-1">
-              Email Address
+              Email or Mobile Number
             </label>
             <div className="relative">
               <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-500" />
               <input
-                type="email"
+                type="text"
                 required
-                placeholder="name@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                placeholder="name@example.com or 10-digit mobile"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 className="w-full rounded-xl border border-white/10 bg-black/60 pl-9 pr-4 py-2.5 text-sm text-white focus:border-accent focus:outline-none"
               />
             </div>
@@ -153,7 +169,7 @@ export function SignInModal({
             disabled={loading}
             className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-900/40 transition-all disabled:opacity-50 cursor-pointer"
           >
-            {loading ? 'Verifying with Firebase...' : 'Sign In'}
+            {loading ? 'Authenticating...' : 'Sign In'}
           </button>
 
           <div className="flex items-center justify-between pt-2 text-xs">
