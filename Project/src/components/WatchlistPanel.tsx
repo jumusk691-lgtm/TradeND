@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { fmtNum } from '@/lib/format';
 
 // 👉 Exact Render WebSocket URL from APK Engine
-const RENDER_WS_URL = "wss://myt-backend-ghpx.onrender.com/ws";
+const RENDER_WS_URL = "wss://myt-backend-1.onrender.com/ws";
 
 interface WatchlistPanelProps {
   watchlist: any[]; 
