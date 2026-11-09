@@ -9,55 +9,19 @@ import { useLivePrices } from '@/hooks/useLivePrices';
 import { makeTx } from '@/components/WalletPanel';
 import type { DashboardTab, Position, WalletTx } from '@/types';
 
-// Firebase imports for Realtime Database balance fetching
+// Firebase imports for Realtime Database balance & watchlist sync
 import { initializeApp, getApps } from 'firebase/app';
-import { getDatabase, ref, onValue } from 'firebase/database';
+import { getDatabase, ref, onValue, set } from 'firebase/database';
 
-// Firebase configuration (uses existing or defaults to your project database)
+// Firebase configuration (matches project RTDB)
 const firebaseConfig = {
-  databaseURL: "https://tradend-default-rtdb.firebaseio.com/"
+  databaseURL: "https://trade-f600a-default-rtdb.firebaseio.com/"
 };
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const db = getDatabase(app);
 
 const STARTING_BALANCE = 50000;
-
-// Default initial watchlist items enriched with proper metadata/lot size
-const DEFAULT_WATCHLIST = [
-  {
-    symbol: 'NIFTY 50',
-    name: 'NIFTY 50 INDEX',
-    exchange: 'NSE',
-    exch_seg: 'NSE',
-    lotsize: 25,
-    token: '26000',
-    instrumentKey: 'NSE_INDEX|Nifty 50',
-    kind: 'INDEX'
-  },
-  {
-    symbol: 'CRUDEOIL26NOVFUT',
-    name: 'CRUDE OIL FUT',
-    exchange: 'MCX',
-    exch_seg: 'MCX',
-    lotsize: 100,
-    token: '254122',
-    instrumentKey: 'MCX|254122',
-    kind: 'FUT',
-    expiry: '19 Nov 2026'
-  },
-  {
-    symbol: 'GOLD26DECFUT',
-    name: 'GOLD FUT',
-    exchange: 'MCX',
-    exch_seg: 'MCX',
-    lotsize: 100,
-    token: '254125',
-    instrumentKey: 'MCX|254125',
-    kind: 'FUT',
-    expiry: '04 Dec 2026'
-  }
-];
 
 function App() {
   const [view, setView] = useState<'splash' | 'dashboard'>('splash');
@@ -69,8 +33,8 @@ function App() {
     STARTING_BALANCE
   );
   
-  // Watchlist supports rich contract objects with token, lotsize, etc.
-  const [watchlist, setWatchlist] = usePersistentState<any[]>('tradend:watchlist', DEFAULT_WATCHLIST);
+  // 🌟 Watchlist initialized as empty (Demo symbols completely removed)
+  const [watchlist, setWatchlist] = usePersistentState<any[]>('tradend:watchlist', []);
   const [positions, setPositions] = usePersistentState<Position[]>('tradend:positions', []);
   const [transactions, setTransactions] = usePersistentState<WalletTx[]>(
     'tradend:txns',
@@ -105,6 +69,31 @@ function App() {
     return () => unsubscribe();
   }, [setWalletBalance]);
 
+  // 🔥 FIREBASE REAL-TIME WATCHLIST SYNC (User Isolation)
+  useEffect(() => {
+    const currentUid = localStorage.getItem('tradend:uid') || 'default_user';
+    const watchlistRef = ref(db, `users_details/${currentUid}/watchlist`);
+
+    const unsubscribe = onValue(
+      watchlistRef,
+      (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          const listArray = Array.isArray(data) ? data : Object.values(data);
+          setWatchlist(listArray);
+        } else {
+          // If empty in database, initialize empty array securely
+          set(watchlistRef, []);
+        }
+      },
+      (error) => {
+        console.error("Firebase watchlist sync error:", error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [setWatchlist]);
+
   // Live prices for the ticker (always running so it's live when dashboard shows)
   const seeds: Record<string, number> = {};
   for (const i of INSTRUMENTS) seeds[i.symbol] = i.price;
@@ -130,34 +119,44 @@ function App() {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
   }, []);
 
-  // --- Watchlist handlers (Ensures full contract object is saved) ---
+  // --- Watchlist handlers (Synced directly to Firebase per user UID) ---
+  const updateFirebaseWatchlist = useCallback((newList: any[]) => {
+    setWatchlist(newList);
+    const currentUid = localStorage.getItem('tradend:uid') || 'default_user';
+    const watchlistRef = ref(db, `users_details/${currentUid}/watchlist`);
+    set(watchlistRef, newList).catch((err) => {
+      console.error("Failed to update watchlist in Firebase:", err);
+    });
+  }, [setWatchlist]);
+
   const toggleWatch = useCallback(
     (contractOrSymbol: any) => {
       const isObj = typeof contractOrSymbol === 'object' && contractOrSymbol !== null;
       const targetSymbol = isObj ? contractOrSymbol.symbol : contractOrSymbol;
 
-      setWatchlist((prev) => {
-        const exists = prev.some((item) => 
+      const updatedList = (() => {
+        const exists = watchlist.some((item) => 
           typeof item === 'string' ? item === targetSymbol : item?.symbol === targetSymbol
         );
 
         if (exists) {
-          return prev.filter((item) => 
+          return watchlist.filter((item) => 
             typeof item === 'string' ? item !== targetSymbol : item?.symbol !== targetSymbol
           );
         } else {
-          // If a string symbol was passed, wrap it as a complete object
           const newObj = isObj ? contractOrSymbol : {
             symbol: targetSymbol,
             name: targetSymbol,
             exchange: 'NSE',
             lotsize: 1
           };
-          return [...prev, newObj];
+          return [...watchlist, newObj];
         }
-      });
+      })();
+
+      updateFirebaseWatchlist(updatedList);
     },
-    [setWatchlist]
+    [watchlist, updateFirebaseWatchlist]
   );
 
   const removeWatch = useCallback(
@@ -166,13 +165,13 @@ function App() {
         ? symbolOrObject.symbol 
         : symbolOrObject;
 
-      setWatchlist((prev) => 
-        prev.filter((item) => 
-          typeof item === 'string' ? item !== targetSymbol : item?.symbol !== targetSymbol
-        )
+      const updatedList = watchlist.filter((item) => 
+        typeof item === 'string' ? item !== targetSymbol : item?.symbol !== targetSymbol
       );
+
+      updateFirebaseWatchlist(updatedList);
     },
-    [setWatchlist]
+    [watchlist, updateFirebaseWatchlist]
   );
 
   // --- Position handlers ---
