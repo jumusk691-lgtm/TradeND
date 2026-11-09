@@ -5,11 +5,11 @@ import { fmtNum, fmtPct } from '@/lib/format';
 import type { Exchange, MarketInstrument } from '@/types';
 
 interface MarketTableProps {
-  livePrices: Record<string, number>;
+  livePrices: Record<string, number | string>;
   selected: string;
   onSelect: (symbol: string) => void;
-  watchlist: string[];
-  onToggleWatch: (symbol: string) => void;
+  watchlist: any[];
+  onToggleWatch: (contractOrSymbol: any) => void;
 }
 
 const EX_FILTERS: (Exchange | 'ALL')[] = ['ALL', 'NSE', 'BSE', 'MCX'];
@@ -25,18 +25,23 @@ export function MarketTable({
   const [exFilter, setExFilter] = useState<Exchange | 'ALL'>('ALL');
 
   const rows = useMemo(() => {
-    return INSTRUMENTS.filter((i) => {
+    const list = Array.isArray(INSTRUMENTS) ? INSTRUMENTS : [];
+    return list.filter((i) => {
       if (exFilter !== 'ALL' && i.exchange !== exFilter) return false;
       if (query) {
         const q = query.toLowerCase();
-        if (!i.symbol.toLowerCase().includes(q) && !i.name.toLowerCase().includes(q))
+        if (!i.symbol?.toLowerCase().includes(q) && !i.name?.toLowerCase().includes(q))
           return false;
       }
       return true;
-    }).map((i) => ({
-      ...i,
-      livePrice: livePrices[i.symbol] ?? i.price,
-    }));
+    }).map((i) => {
+      const liveVal = livePrices[i.symbol];
+      const priceNum = liveVal !== undefined ? Number(liveVal) : (i.price || 0);
+      return {
+        ...i,
+        livePrice: priceNum,
+      };
+    });
   }, [query, exFilter, livePrices]);
 
   return (
@@ -52,8 +57,9 @@ export function MarketTable({
             {EX_FILTERS.map((f) => (
               <button
                 key={f}
+                type="button"
                 onClick={() => setExFilter(f)}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
                   exFilter === f
                     ? 'bg-accent text-white'
                     : 'text-gray-400 hover:text-white hover:bg-white/5'
@@ -89,13 +95,18 @@ export function MarketTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((r: MarketInstrument & { livePrice: number }) => {
-              // recompute change relative to prevClose using live price
-              const chgAbs = r.livePrice - r.prevClose;
-              const chgPct = (chgAbs / r.prevClose) * 100;
+            {rows.map((r) => {
+              const prevClose = r.prevClose || r.livePrice || 1;
+              const chgAbs = r.livePrice - prevClose;
+              const chgPct = prevClose > 0 ? (chgAbs / prevClose) * 100 : 0;
               const isUp = chgAbs >= 0;
               const isSel = selected === r.symbol;
-              const isWatched = watchlist.includes(r.symbol);
+              
+              // Watchlist check (supports string array or object array)
+              const isWatched = watchlist.some((w) => 
+                typeof w === 'string' ? w === r.symbol : w?.symbol === r.symbol
+              );
+
               return (
                 <tr
                   key={r.symbol}
@@ -130,18 +141,19 @@ export function MarketTable({
                     {isUp ? '▲' : '▼'} {fmtPct(chgPct)}
                   </td>
                   <td className="px-3 py-2.5 text-right font-mono text-gray-400 hidden sm:table-cell">
-                    {fmtNum(r.high)}
+                    {fmtNum(r.high || r.livePrice)}
                   </td>
                   <td className="px-3 py-2.5 text-right font-mono text-gray-400 hidden sm:table-cell">
-                    {fmtNum(r.low)}
+                    {fmtNum(r.low || r.livePrice)}
                   </td>
                   <td className="px-2 py-2.5 text-center">
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onToggleWatch(r.symbol);
+                        onToggleWatch(r);
                       }}
-                      className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+                      className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors cursor-pointer ${
                         isWatched
                           ? 'text-gold hover:bg-gold/10'
                           : 'text-gray-600 hover:text-gray-300 hover:bg-white/5'
