@@ -1,8 +1,7 @@
-
 import { useState } from 'react';
 import { Mail, Lock, X } from 'lucide-react';
 import { ref, get } from 'firebase/database';
-import { db } from '@/lib/firebase'; // Ensure your firebase export path is correct
+import { db } from '@/lib/firebase'; // Ensure your firebase path is correct
 
 interface SignInModalProps {
   isOpen: boolean;
@@ -44,32 +43,44 @@ export function SignInModal({
 
     setLoading(true);
     try {
+      // Firebase Realtime Database keys cannot contain dots (.)
       const emailKey = cleanEmail.replace(/\./g, ',');
       const userRef = ref(db, `users_details/${emailKey}`);
       const snapshot = await get(userRef);
 
+      // 1. Check if user node exists in Firebase
       if (!snapshot.exists()) {
-        setError('Account not found! Please check your email or Register.');
+        setError('Account not found! Please check your email or click Create Account.');
         setLoading(false);
-        return;
+        return; // 🛑 Stops execution: Dashboard will NOT open
       }
 
       const userData = snapshot.val();
-      if (userData.password && String(userData.password) !== cleanPass) {
+
+      // 2. Strict password validation
+      if (!userData.password || String(userData.password) !== cleanPass) {
         setError('Incorrect password. Please try again.');
         setLoading(false);
-        return;
+        return; // 🛑 Stops execution: Dashboard will NOT open
       }
 
-      // Save user session isolation token
+      // 3. Save isolated session tokens only on successful match
       localStorage.setItem('tradend:uid', emailKey);
       localStorage.setItem('tradend:email', cleanEmail);
-      if (userData.name) localStorage.setItem('tradend:name', userData.name);
+      if (userData.name) {
+        localStorage.setItem('tradend:name', userData.name);
+      }
 
+      // Reset form states
+      setEmail('');
+      setPassword('');
+      setError(null);
+
+      // Trigger success navigation to open dashboard
       onSuccess();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Sign In Error:', err);
-      setError('Connection error. Please try again.');
+      setError('Connection error. Failed to verify credentials with Firebase.');
     } finally {
       setLoading(false);
     }
@@ -79,7 +90,11 @@ export function SignInModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fadeIn">
       <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-[#0a0a0c] p-6 shadow-2xl text-left">
         <button
-          onClick={onClose}
+          type="button"
+          onClick={() => {
+            setError(null);
+            onClose();
+          }}
           className="absolute right-4 top-4 rounded-lg p-1 text-gray-400 hover:bg-white/10 hover:text-white cursor-pointer"
         >
           <X className="h-5 w-5" />
@@ -88,7 +103,7 @@ export function SignInModal({
         <div className="mb-6">
           <h2 className="text-xl font-bold text-white">Sign In to Trade</h2>
           <p className="text-xs text-gray-400 mt-1">
-            Enter your registered email & password to access dashboard.
+            Enter your registered email &amp; password to access dashboard.
           </p>
         </div>
 
@@ -128,7 +143,7 @@ export function SignInModal({
           </div>
 
           {error && (
-            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-400">
+            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-400 font-medium">
               {error}
             </div>
           )}
@@ -138,20 +153,26 @@ export function SignInModal({
             disabled={loading}
             className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-900/40 transition-all disabled:opacity-50 cursor-pointer"
           >
-            {loading ? 'Verifying...' : 'Sign In'}
+            {loading ? 'Verifying with Firebase...' : 'Sign In'}
           </button>
 
           <div className="flex items-center justify-between pt-2 text-xs">
             <button
               type="button"
-              onClick={onOpenForgot}
+              onClick={() => {
+                setError(null);
+                onOpenForgot();
+              }}
               className="text-gray-400 hover:text-white transition-colors cursor-pointer"
             >
               Forgot Password?
             </button>
             <button
               type="button"
-              onClick={onOpenRegister}
+              onClick={() => {
+                setError(null);
+                onOpenRegister();
+              }}
               className="text-gold font-semibold hover:underline cursor-pointer"
             >
               Create Account
@@ -162,3 +183,5 @@ export function SignInModal({
     </div>
   );
 }
+
+export default SignInModal;
