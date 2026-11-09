@@ -16,7 +16,7 @@ interface TradePanelProps {
   contract?: any; // Rich contract object from DB (exchange, name, lotsize, etc.)
 }
 
-const RENDER_WS_URL = "wss://myt-backend-ghpx.onrender.com/ws";
+const RENDER_WS_URL = "wss://myt-backend-1.onrender.com/ws";
 
 export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, contract }: TradePanelProps) {
   const staticInst = getInstrument(symbol);
