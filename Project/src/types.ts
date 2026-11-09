@@ -17,13 +17,17 @@ export interface MarketInstrument {
   volume: string;
 }
 
-export type DerivativeKind = 'FUT' | 'CE' | 'PE';
+export type DerivativeKind = 'FUT' | 'CE' | 'PE' | 'INDEX';
 
 export interface DerivativeContract extends MarketInstrument {
   kind: DerivativeKind;
   underlying: string;
   expiry: string;
   strike?: number;
+  token?: string;
+  instrumentKey?: string;
+  lotsize?: number;
+  exch_seg?: string;
 }
 
 export interface Candle {
@@ -67,9 +71,19 @@ export interface Position {
   currentPrice: number;
 }
 
+// 🌟 Updated WatchlistItem to support token, lotsize, exchange, etc.
 export interface WatchlistItem {
   symbol: string;
-  addedAt: number;
+  name?: string;
+  exchange?: Exchange | string;
+  exch_seg?: string;
+  token?: string;
+  instrumentKey?: string;
+  lotsize?: number;
+  expiry?: string;
+  kind?: DerivativeKind | string;
+  addedAt?: number;
+  price?: number;
 }
 
 export interface WalletTx {
@@ -83,7 +97,7 @@ export interface WalletTx {
 
 export interface SessionState {
   walletBalance: number;
-  watchlist: WatchlistItem[];
+  watchlist: (WatchlistItem | string)[];
   positions: Position[];
   transactions: WalletTx[];
   activeTab: DashboardTab;
