@@ -3,7 +3,8 @@ import { useMemo, useState, useEffect } from 'react';
 import { fmtNum, fmtPct } from '@/lib/format';
 import type { DerivativeKind, Exchange } from '@/types';
 
-const DB_FILE_URL = "https://fnfynhgkdevxytxtfzrk.supabase.co/storage/v1/object/public/myt/angel_master.db";
+// Single Source of Truth: Centralized Render Backend API URL for Symbols, Watchlist, Positions & Charts
+const RENDER_API_URL = "https://myt-backend-1.onrender.com";
 
 interface ContractBrowserProps {
   selected: string;
@@ -18,16 +19,12 @@ type ContractFilter = DerivativeKind | 'ALL';
 const exchanges: ExchangeFilter[] = ['ALL', 'NSE', 'BSE', 'MCX'];
 const kinds: ContractFilter[] = ['ALL', 'FUT', 'CE', 'PE'];
 
-// Number Wali Date (2026-11-17) Ko Broker Style (17 Nov 2026) Me Convert Karne Ka Function
+// Format Raw Expiry (e.g., 2026-11-17 -> 17 Nov 2026)
 function formatExpiryDate(rawExpiry: string): string {
   if (!rawExpiry) return '';
-  
-  // Agar pehle se "17 NOV 2026" jaisa hai toh direct return karo
   if (/[a-zA-Z]/.test(rawExpiry)) return rawExpiry;
 
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  
-  // YYYY-MM-DD format handling
   const parts = rawExpiry.split('-');
   if (parts.length === 3) {
     const year = parts[0];
@@ -40,6 +37,7 @@ function formatExpiryDate(rawExpiry: string): string {
   return rawExpiry;
 }
 
+// Format Symbol Names (e.g. NIFTY26NOV25000CE)
 function formatSymbolName(rawSymbol: string): string {
   if (!rawSymbol) return '';
   const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
@@ -73,141 +71,86 @@ export function ContractBrowser({
   const [selectedExpiry, setSelectedExpiry] = useState<string>('ALL');
   const [expanded, setExpanded] = useState(true);
 
-  const [dbInstance, setDbInstance] = useState<any>(null);
   const [rawContracts, setRawContracts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function initDatabase() {
-      try {
-        setLoading(true);
-        setErrorMsg(null);
-
-        const response = await fetch(DB_FILE_URL, { cache: 'no-store' });
-        if (!response.ok) throw new Error(`DB Fetch failed: ${response.statusText}`);
-        const arrayBuffer = await response.arrayBuffer();
-
-        //@ts-ignore
-        const initSqlJs = window.initSqlJs;
-        if (!initSqlJs) throw new Error('SQL.js not loaded in index.html');
-
-        const SQL = await initSqlJs({
-          locateFile: (file: string) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
-        });
-
-        const db = new SQL.Database(new Uint8Array(arrayBuffer));
-        setDbInstance(db);
-        loadSymbolsFromDb(db, 'NSE', 'ALL', '');
-      } catch (err: any) {
-        console.error('DB Init Error:', err);
-        setErrorMsg(err?.message || 'Failed to load database');
-        setLoading(false);
-      }
-    }
-
-    initDatabase();
-  }, []);
-
-  const loadSymbolsFromDb = (db: any, exFilter: string, kindFilter: string, searchQuery: string) => {
+  // Fetch Live Symbols from Render Backend API
+  const fetchSymbolsFromRender = async (exFilter: string, kindFilter: string, searchQuery: string) => {
     try {
-      let sql = `SELECT token, symbol, exch_seg, strike, expiry, name, lotsize, tick_size, instrumenttype FROM symbols WHERE 1=1`;
+      setLoading(true);
+      setErrorMsg(null);
+
+      const params = new URLSearchParams({
+        exchange: exFilter,
+        kind: kindFilter,
+        search: searchQuery
+      });
+
+      const response = await fetch(`${RENDER_API_URL}/api/symbols?${params.toString()}`);
       
-      if (exFilter !== 'ALL') {
-        if (exFilter === 'NSE') sql += ` AND (exch_seg IN ('NSE', 'NFO', 'NSE_EQ', 'NSE_FO') OR exch_seg LIKE 'NSE%')`;
-        else if (exFilter === 'BSE') sql += ` AND (exch_seg IN ('BSE', 'BFO', 'BSE_EQ', 'BSE_FO') OR exch_seg LIKE 'BSE%')`;
-        else if (exFilter === 'MCX') sql += ` AND (exch_seg IN ('MCX', 'MCX_FO') OR exch_seg LIKE 'MCX%')`;
+      if (!response.ok) {
+        throw new Error(`Render API Error: ${response.statusText}`);
       }
 
-      if (kindFilter === 'CE') {
-        sql += ` AND (symbol LIKE '%CE' OR instrumenttype LIKE '%CE%' OR (instrumenttype LIKE '%OPT%' AND symbol NOT LIKE '%PE'))`;
-      } else if (kindFilter === 'PE') {
-        sql += ` AND (symbol LIKE '%PE' OR instrumenttype LIKE '%PE%')`;
-      } else if (kindFilter === 'FUT') {
-        sql += ` AND (instrumenttype LIKE '%FUT%' OR symbol LIKE '%FUT%' OR instrumenttype LIKE '%COM%' OR (strike IS NULL OR strike = '' OR strike = '0.0')) AND symbol NOT LIKE '%CE' AND symbol NOT LIKE '%PE'`;
-      }
+      const data = await response.json();
+      const symbolList = Array.isArray(data) ? data : (data.symbols || data.data || []);
 
-      if (searchQuery.trim() !== '') {
-        const rawInput = searchQuery.trim().toUpperCase();
-        const letters = rawInput.replace(/[^A-Z]/g, '');
-        const digits = rawInput.replace(/[^0-9]/g, '');
+      const parsed = symbolList.map((item: any) => {
+        const rawSym = item.symbol ? String(item.symbol) : '';
+        const sym = formatSymbolName(rawSym);
 
-        if (letters.length > 0 && digits.length > 0) {
-          sql += ` AND ((symbol LIKE '%${letters}%' OR name LIKE '%${letters}%') AND (symbol LIKE '%${digits}%' OR strike LIKE '%${digits}%' OR name LIKE '%${digits}%'))`;
-        } else if (letters.length > 0) {
-          sql += ` AND (symbol LIKE '%${letters}%' OR name LIKE '%${letters}%')`;
-        } else if (digits.length > 0) {
-          sql += ` AND (symbol LIKE '%${digits}%' OR strike LIKE '%${digits}%' OR name LIKE '%${digits}%')`;
-        }
-      }
+        let inferredKind: DerivativeKind = 'FUT';
+        if (sym.endsWith('CE') || String(item.instrumenttype || item.kind || '').includes('CE')) inferredKind = 'CE';
+        else if (sym.endsWith('PE') || String(item.instrumenttype || item.kind || '').includes('PE')) inferredKind = 'PE';
+        else if (sym.includes('FUT') || String(item.instrumenttype || item.kind || '').includes('FUT')) inferredKind = 'FUT';
 
-      // Order by expiry chronologically like brokers
-      sql += ` ORDER BY expiry ASC LIMIT 400;`;
+        let exch: Exchange = 'NSE';
+        const seg = String(item.exch_seg || item.exchange || '').toUpperCase();
+        if (seg.includes('BSE') || seg.includes('BFO')) exch = 'BSE';
+        else if (seg.includes('MCX')) exch = 'MCX';
 
-      const res = db.exec(sql);
-      if (res.length > 0) {
-        const columns = res[0].columns;
-        const values = res[0].values;
+        const rawExp = item.expiry ? String(item.expiry) : '';
 
-        const parsed = values.map((row: any) => {
-          const rowData: Record<string, any> = {};
-          columns.forEach((col: string, idx: number) => {
-            rowData[col] = row[idx];
-          });
+        return {
+          token: String(item.token || ''),
+          symbol: sym,
+          name: item.name ? formatSymbolName(String(item.name)) : sym,
+          exchange: exch,
+          kind: inferredKind,
+          rawExpiry: rawExp,
+          expiry: formatExpiryDate(rawExp),
+          strike: item.strike && item.strike !== '0.0' ? Number(item.strike) : undefined,
+          price: item.price ? Number(item.price) : 100.0,
+          changePct: item.changePct ? Number(item.changePct) : 0.0,
+          lotsize: String(item.lotsize || '1'),
+          tick_size: String(item.tick_size || '0.05')
+        };
+      });
 
-          const rawSym = rowData.symbol ? String(rowData.symbol) : '';
-          const sym = formatSymbolName(rawSym);
-
-          let inferredKind: DerivativeKind = 'FUT';
-          if (sym.endsWith('CE') || String(rowData.instrumenttype || '').includes('CE')) inferredKind = 'CE';
-          else if (sym.endsWith('PE') || String(rowData.instrumenttype || '').includes('PE')) inferredKind = 'PE';
-          else if (sym.includes('FUT') || String(rowData.instrumenttype || '').includes('FUT') || String(rowData.instrumenttype || '').includes('COM')) inferredKind = 'FUT';
-
-          let exch: Exchange = 'NSE';
-          const seg = String(rowData.exch_seg || '').toUpperCase();
-          if (seg.includes('BSE') || seg.includes('BFO')) exch = 'BSE';
-          else if (seg.includes('MCX')) exch = 'MCX';
-
-          const rawExp = rowData.expiry ? String(rowData.expiry) : '';
-
-          return {
-            token: String(rowData.token || ''),
-            symbol: sym,
-            name: rowData.name ? formatSymbolName(String(rowData.name)) : sym,
-            exchange: exch,
-            kind: inferredKind,
-            rawExpiry: rawExp,
-            expiry: formatExpiryDate(rawExp), // Monthly Name Converter Applied
-            strike: rowData.strike && rowData.strike !== '0.0' ? Number(rowData.strike) : undefined,
-            price: 100.0,
-            changePct: 0.0,
-            lotsize: String(rowData.lotsize || '1'),
-            tick_size: String(rowData.tick_size || '0.05')
-          };
-        });
-
-        setRawContracts(parsed);
-      } else {
-        setRawContracts([]);
-      }
-    } catch (e) {
-      console.error('Query error:', e);
+      setRawContracts(parsed);
+    } catch (err: any) {
+      console.error('Fetch error from Render backend:', err);
+      setErrorMsg(err?.message || 'Failed to fetch symbols from Render backend');
+      setRawContracts([]);
     } finally {
       setLoading(false);
     }
   };
 
+  // Re-fetch when filters or search change with debounce
   useEffect(() => {
-    if (dbInstance) {
-      setLoading(true);
-      setSelectedExpiry('ALL');
-      loadSymbolsFromDb(dbInstance, exchange, kind, search);
-    }
-  }, [exchange, kind, search, dbInstance]);
+    setSelectedExpiry('ALL');
+    const timer = setTimeout(() => {
+      fetchSymbolsFromRender(exchange, kind, search);
+    }, 300);
 
-  // Expiries List sorted chronologically (Weekly & Monthly Order like brokers)
+    return () => clearTimeout(timer);
+  }, [exchange, kind, search]);
+
+  // Expiries List sorted chronologically
   const availableExpiries = useMemo(() => {
-    const expMap = new Map<string, string>(); // rawExpiry -> formattedExpiry
+    const expMap = new Map<string, string>();
     rawContracts.forEach(c => {
       if (c.rawExpiry && c.expiry) {
         expMap.set(c.rawExpiry, c.expiry);
@@ -219,7 +162,7 @@ export function ContractBrowser({
       .sort((a, b) => a.raw.localeCompare(b.raw));
   }, [rawContracts]);
 
-  // Filtered by Selected Expiry
+  // Filtered Contracts by Selected Expiry
   const contracts = useMemo(() => {
     if (selectedExpiry === 'ALL') return rawContracts;
     return rawContracts.filter(c => c.rawExpiry === selectedExpiry);
@@ -235,7 +178,7 @@ export function ContractBrowser({
               <h2 className="font-display text-lg font-bold text-white">Options &amp; Futures</h2>
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              Live contracts with broker expiry filters
+              Live data stream via Render backend API
             </p>
           </div>
           <button
@@ -316,7 +259,7 @@ export function ContractBrowser({
           </div>
 
           {loading ? (
-            <div className="py-8 text-center text-xs text-gray-400">Loading contracts...</div>
+            <div className="py-8 text-center text-xs text-gray-400">Fetching live data from Render backend...</div>
           ) : errorMsg ? (
             <div className="py-8 text-center text-xs text-rose-400">Error: {errorMsg}</div>
           ) : (
