@@ -1,18 +1,11 @@
 import { useEffect, useState } from 'react';
-import { ShieldCheck, Download, ArrowRight, Lock, Zap, TrendingUp, User, Phone, X } from 'lucide-react';
+import { ShieldCheck, Download, ArrowRight, Lock, Zap, TrendingUp } from 'lucide-react';
 import { APK_URL } from '@/types';
 
-// Firebase Database Imports
-import { initializeApp, getApps } from 'firebase/app';
-import { getDatabase, ref, get, set } from 'firebase/database';
-
-// 🌟 Correct Firebase Realtime Database URL as per project config
-const firebaseConfig = {
-  databaseURL: "https://trade-f600a-default-rtdb.firebaseio.com/"
-};
-
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-const db = getDatabase(app);
+// Import distinct modals from separate files
+import { SignInModal } from '@/components/SignInModal';
+import { RegisterModal } from '@/components/RegisterModal';
+import { ForgotPasswordModal } from '@/components/ForgotPasswordModal';
 
 interface SplashProps {
   onEnter: () => void;
@@ -21,105 +14,15 @@ interface SplashProps {
 export function Splash({ onEnter }: SplashProps) {
   const [mounted, setMounted] = useState(false);
   
-  // Auth Form States
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [isRegister, setIsRegister] = useState(false);
-  const [phone, setPhone] = useState('');
-  const [pin, setPin] = useState('');
-  const [name, setName] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Modal Navigation State: 'none' | 'signin' | 'register' | 'forgot'
+  const [activeModal, setActiveModal] = useState<'none' | 'signin' | 'register' | 'forgot'>('none');
 
   useEffect(() => {
     const t = setTimeout(() => setMounted(true), 40);
     return () => clearTimeout(t);
   }, []);
 
-  // 🔥 SECURE FIREBASE SIGN-IN / REGISTER CHECK (User Data Isolation)
-  const handleAuthSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-
-    const cleanPhone = phone.trim();
-    const cleanPin = pin.trim();
-
-    if (!cleanPhone || cleanPhone.length < 10) {
-      setError('Please enter a valid 10-digit mobile number.');
-      return;
-    }
-    if (!cleanPin || cleanPin.length < 4) {
-      setError('Please enter a valid 4-digit PIN.');
-      return;
-    }
-    if (isRegister && !name.trim()) {
-      setError('Please enter your full name.');
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      // Each user is isolated strictly under users_details/{phone_number}
-      const userRef = ref(db, `users_details/${cleanPhone}`);
-      const snapshot = await get(userRef);
-
-      if (isRegister) {
-        // --- REGISTRATION LOGIC ---
-        if (snapshot.exists()) {
-          setError('Account already exists with this number. Please Sign In.');
-          setLoading(false);
-          return;
-        }
-
-        const newUser = {
-          phone: cleanPhone,
-          pin: cleanPin,
-          name: name.trim(),
-          funds: { balance: 50000 },
-          createdAt: new Date().toISOString()
-        };
-
-        await set(userRef, newUser);
-        
-        // Save secure session tokens in localStorage
-        localStorage.setItem('tradend:uid', cleanPhone);
-        localStorage.setItem('tradend:phone', cleanPhone);
-        localStorage.setItem('tradend:name', name.trim());
-        
-        onEnter();
-      } else {
-        // --- SIGN IN LOGIC ---
-        if (!snapshot.exists()) {
-          setError('Account not found! Click "New user? Register" below.');
-          setLoading(false);
-          return;
-        }
-
-        const userData = snapshot.val();
-        if (userData.pin && String(userData.pin) !== cleanPin) {
-          setError('Incorrect PIN. Please check and try again.');
-          setLoading(false);
-          return;
-        }
-
-        // Save secure session tokens in localStorage
-        localStorage.setItem('tradend:uid', cleanPhone);
-        localStorage.setItem('tradend:phone', cleanPhone);
-        if (userData.name) localStorage.setItem('tradend:name', userData.name);
-
-        onEnter();
-      }
-    } catch (err: any) {
-      console.error("Firebase Auth Error:", err);
-      setError("Server connection failed. Proceeding with local session...");
-      
-      localStorage.setItem('tradend:uid', cleanPhone);
-      localStorage.setItem('tradend:phone', cleanPhone);
-      setTimeout(() => onEnter(), 800);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const closeModal = () => setActiveModal('none');
 
   return (
     <section
@@ -128,6 +31,7 @@ export function Splash({ onEnter }: SplashProps) {
     >
       {/* Animated grid background */}
       <div className="absolute inset-0 grid-bg animate-grid-pan opacity-60" />
+      
       {/* Radial glows */}
       <div className="pointer-events-none absolute -top-40 -left-40 h-[34rem] w-[34rem] rounded-full bg-accent/20 blur-[120px]" />
       <div className="pointer-events-none absolute -bottom-40 -right-40 h-[34rem] w-[34rem] rounded-full bg-gold/15 blur-[120px]" />
@@ -215,8 +119,9 @@ export function Splash({ onEnter }: SplashProps) {
             mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
           }`}
         >
+          {/* Trade Now opens SignInModal directly */}
           <button
-            onClick={() => setShowAuthModal(true)}
+            onClick={() => setActiveModal('signin')}
             className="group relative inline-flex items-center justify-center gap-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-8 py-4 text-lg font-bold text-white shadow-lg shadow-emerald-900/35 transition-transform hover:scale-[1.03] active:scale-95 w-full sm:w-auto cursor-pointer"
           >
             Trade Now
@@ -256,120 +161,27 @@ export function Splash({ onEnter }: SplashProps) {
         </div>
       </div>
 
-      {/* 🔥 SECURE AUTHENTICATION POPUP MODAL */}
-      {showAuthModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fadeIn">
-          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-[#0a0a0c] p-6 shadow-2xl">
-            <button
-              onClick={() => setShowAuthModal(false)}
-              className="absolute right-4 top-4 rounded-lg p-1 text-gray-400 hover:bg-white/10 hover:text-white"
-            >
-              <X className="h-5 w-5" />
-            </button>
+      {/* SEPARATE MODAL COMPONENTS ROUTING */}
+      <SignInModal
+        isOpen={activeModal === 'signin'}
+        onClose={closeModal}
+        onOpenRegister={() => setActiveModal('register')}
+        onOpenForgot={() => setActiveModal('forgot')}
+        onSuccess={onEnter}
+      />
 
-            <div className="mb-6 text-left">
-              <h2 className="text-xl font-bold text-white">
-                {isRegister ? 'Register Account' : 'Sign In to Trade'}
-              </h2>
-              <p className="text-xs text-gray-400 mt-1">
-                {isRegister
-                  ? 'Enter details to create your secure private trading profile.'
-                  : 'Enter your phone number & 4-digit PIN to access your account.'}
-              </p>
-            </div>
+      <RegisterModal
+        isOpen={activeModal === 'register'}
+        onClose={closeModal}
+        onOpenSignIn={() => setActiveModal('signin')}
+        onSuccess={onEnter}
+      />
 
-            <form onSubmit={handleAuthSubmit} className="space-y-4 text-left">
-              {isRegister && (
-                <div>
-                  <label className="block text-[11px] uppercase tracking-wider text-gray-400 mb-1">
-                    Full Name
-                  </label>
-                  <div className="relative">
-                    <User className="absolute left-3 top-3 h-4 w-4 text-gray-500" />
-                    <input
-                      type="text"
-                      required
-                      placeholder="Your Full Name"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      className="w-full rounded-xl border border-white/10 bg-black/60 pl-9 pr-4 py-2.5 text-sm text-white focus:border-accent focus:outline-none"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider text-gray-400 mb-1">
-                  Mobile Number
-                </label>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-3 h-4 w-4 text-gray-500" />
-                  <input
-                    type="tel"
-                    required
-                    maxLength={10}
-                    placeholder="10-digit mobile number"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="w-full rounded-xl border border-white/10 bg-black/60 pl-9 pr-4 py-2.5 font-mono text-sm text-white focus:border-accent focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider text-gray-400 mb-1">
-                  4-Digit PIN
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-3 h-4 w-4 text-gray-500" />
-                  <input
-                    type="password"
-                    required
-                    maxLength={4}
-                    placeholder="••••"
-                    value={pin}
-                    onChange={(e) => setPin(e.target.value)}
-                    className="w-full rounded-xl border border-white/10 bg-black/60 pl-9 pr-4 py-2.5 font-mono tracking-widest text-sm text-white focus:border-accent focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {error && (
-                <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-400">
-                  {error}
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-900/40 transition-all disabled:opacity-50 cursor-pointer"
-              >
-                {loading
-                  ? 'Verifying Secure Login...'
-                  : isRegister
-                  ? 'Register & Open Dashboard'
-                  : 'Sign In & Open Dashboard'}
-              </button>
-
-              <div className="text-center pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsRegister(!isRegister);
-                    setError(null);
-                  }}
-                  className="text-xs text-gold hover:underline cursor-pointer"
-                >
-                  {isRegister
-                    ? 'Already registered? Click here to Sign In'
-                    : 'New user? Click here to Register'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <ForgotPasswordModal
+        isOpen={activeModal === 'forgot'}
+        onClose={closeModal}
+        onOpenSignIn={() => setActiveModal('signin')}
+      />
     </section>
   );
 }
