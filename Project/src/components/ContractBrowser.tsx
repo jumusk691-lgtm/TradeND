@@ -1,4 +1,4 @@
-import { ChevronDown, Plus, Search, Star } from 'lucide-react';
+import { ChevronDown, Plus, Search, Star, BarChart2 } from 'lucide-react';
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { fmtNum, fmtPct } from '@/lib/format';
 import type { DerivativeKind, Exchange } from '@/types';
@@ -13,7 +13,8 @@ interface ContractBrowserProps {
   selected: string;
   onSelect: (symbol: string) => void;
   onAddWatch: (contract: any) => void;
-  watchlist: string[];
+  watchlist: any[];
+  onOpenChart?: (contract: any) => void;
 }
 
 type ExchangeFilter = Exchange | 'ALL';
@@ -67,6 +68,7 @@ export function ContractBrowser({
   onSelect,
   onAddWatch,
   watchlist,
+  onOpenChart,
 }: ContractBrowserProps) {
   const [exchange, setExchange] = useState<ExchangeFilter>('NSE');
   const [kind, setKind] = useState<ContractFilter>('ALL');
@@ -76,7 +78,7 @@ export function ContractBrowser({
 
   const [dbInstance, setDbInstance] = useState<any>(null);
   const [rawContracts, setRawContracts] = useState<any[]>([]);
-  const [livePrices, setLivePrices] = useState<Record<string, string>>({});
+  const [livePrices, setLivePrices] = useState<Record<string, string | number>>({});
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -130,7 +132,11 @@ export function ContractBrowser({
           if (data.type === "initial_ltps" && data.data) {
             setLivePrices(prev => ({ ...prev, ...data.data }));
           } else if (data.instrument_key && data.ltp) {
-            setLivePrices(prev => ({ ...prev, [data.instrument_key]: data.ltp }));
+            setLivePrices(prev => ({ ...prev, [data.instrument_key]: data.ltp, [data.token]: data.ltp }));
+          } else if (data.token && data.ltp) {
+            setLivePrices(prev => ({ ...prev, [data.token]: data.ltp }));
+          } else {
+            setLivePrices(prev => ({ ...prev, ...data }));
           }
         } catch (e) {
           console.error("WS Parse error:", e);
@@ -234,10 +240,11 @@ export function ContractBrowser({
 
         setRawContracts(parsed);
 
-        // Send tokens to Render WebSocket for live prices
+        // Send tokens & keys to Render WebSocket for live prices
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           const keys = parsed.map((p: any) => p.instrumentKey);
-          wsRef.current.send(JSON.stringify({ instrumentKeys: keys }));
+          const tokens = parsed.map((p: any) => p.token);
+          wsRef.current.send(JSON.stringify({ instrumentKeys: keys, tokens: tokens }));
         }
       } else {
         setRawContracts([]);
@@ -345,122 +352,4 @@ export function ContractBrowser({
             </div>
 
             <div className="relative mt-3">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search NIFTY, GOLD, SILVER, strike..."
-                className="w-full rounded-lg border border-white/5 bg-black/40 py-2.5 pl-9 pr-3 text-sm text-white placeholder:text-gray-600 focus:outline-none"
-              />
-            </div>
-          </>
-        )}
-      </div>
-
-      {expanded && (
-        <div className="max-h-[410px] overflow-y-auto scrollbar-thin p-2 sm:p-3">
-          <div className="mb-2 flex items-center justify-between px-2 text-[10px] uppercase tracking-[0.16em] text-gray-600">
-            <span>{exchange === 'ALL' ? 'All exchanges' : `${exchange} contracts`}</span>
-            <span>{contracts.length} contracts</span>
-          </div>
-
-          {loading ? (
-            <div className="py-8 text-center text-xs text-gray-400">Loading contracts from DB...</div>
-          ) : errorMsg ? (
-            <div className="py-8 text-center text-xs text-rose-400">Error: {errorMsg}</div>
-          ) : (
-            <div className="space-y-1.5">
-              {contracts.map((contract) => {
-                const selectedContract = selected === contract.symbol;
-                const watched = watchlist.includes(contract.symbol);
-                const currentPrice = livePrices[contract.instrumentKey] || livePrices[contract.token] || "0.00";
-                
-                return (
-                  <div
-                    key={contract.token || contract.symbol}
-                    className={`flex items-center gap-3 rounded-xl border p-3 transition-colors ${
-                      selectedContract ? 'border-accent/40 bg-accent/10' : 'border-white/5 bg-white/[0.015]'
-                    }`}
-                  >
-                    {/* Symbol Click / Selection Button */}
-                    <button
-                      type="button"
-                      onClick={() => onSelect(contract.symbol)}
-                      className="min-w-0 flex-1 text-left cursor-pointer bg-transparent border-none p-0"
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-sm font-bold text-white sm:text-[15px]">
-                          {contract.name}
-                        </span>
-                        <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[10px] font-extrabold text-accent-200">
-                          {contract.kind}
-                        </span>
-                      </div>
-                      <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-500">
-                        <span>{contract.exchange}</span>
-                        {contract.expiry && (
-                          <>
-                            <span>·</span>
-                            <span>{contract.expiry}</span>
-                          </>
-                        )}
-                        {contract.strike && (
-                          <>
-                            <span>·</span>
-                            <span>Strike {contract.strike}</span>
-                          </>
-                        )}
-                      </div>
-                    </button>
-
-                    <div className="text-right">
-                      <div className="font-mono text-sm font-semibold text-white">
-                        {fmtNum(Number(currentPrice))}
-                      </div>
-                      <div className="font-mono text-[11px] text-emerald-400">
-                        ▲ Live LTP
-                      </div>
-                    </div>
-
-                    {/* Star / Watchlist Button */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onAddWatch(contract);
-                      }}
-                      className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border cursor-pointer ${
-                        watched ? 'border-gold/30 bg-gold/10 text-gold' : 'border-white/5 text-gray-600'
-                      }`}
-                    >
-                      <Star className={`h-4 w-4 ${watched ? 'fill-gold' : ''}`} />
-                    </button>
-
-                    {/* Trade Button */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelect(contract.symbol);
-                      }}
-                      className="inline-flex h-8 items-center gap-1 rounded-lg bg-gold px-2.5 text-[11px] font-extrabold text-black cursor-pointer"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      Trade
-                    </button>
-                  </div>
-                );
-              })}
-
-              {contracts.length === 0 && (
-                <div className="rounded-xl border border-dashed border-white/10 px-4 py-10 text-center text-sm text-gray-500">
-                  No contracts match this filter.
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2
