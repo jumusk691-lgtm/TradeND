@@ -1,4 +1,4 @@
-Import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Splash } from '@/components/Splash';
 import { Dashboard } from '@/components/Dashboard';
 import { SupportModal } from '@/components/SupportModal';
