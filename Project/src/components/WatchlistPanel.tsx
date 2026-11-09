@@ -40,7 +40,6 @@ export function WatchlistPanel({
           const data = JSON.parse(event.data);
           if (data.type === "initial_ltps" && data.data) {
             setLivePrices(prev => {
-              // Store previous prices for green/red flash check
               const numericPrev: Record<string, number> = {};
               Object.keys(data.data).forEach(k => {
                 numericPrev[k] = Number(data.data[k]) || 0;
@@ -165,15 +164,13 @@ export function WatchlistPanel({
 
             const price = Number(priceVal);
             const oldPrice = prevPrices[instrumentKey] || prevPrices[token] || prevPrices[sym] || price;
-            
-            // Green if price went up or equal, Red if price went down compared to previous tick
             const isGreen = price >= oldPrice;
             const isSel = selected === sym;
 
             return (
               <div
                 key={instrumentKey || token || sym}
-                onClick={() => onSelect(sym)} // Click to select for trading / order panel
+                onClick={() => onSelect(sym)}
                 className={`group flex items-center justify-between rounded-xl border p-3 transition-colors cursor-pointer ${
                   isSel
                     ? 'border-accent/40 bg-accent/20'
@@ -209,7 +206,7 @@ export function WatchlistPanel({
 
                 <div className="flex items-center gap-3">
                   <div className="text-right">
-                    {/* Price with dynamic Green/Red Color based on tick movement */}
+                    {/* Price with Dynamic Green / Red Color */}
                     <div className={`font-mono text-sm font-bold ${isGreen ? 'text-emerald-400' : 'text-rose-400'}`}>
                       {fmtNum(price)}
                     </div>
