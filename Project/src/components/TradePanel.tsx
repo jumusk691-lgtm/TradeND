@@ -13,47 +13,20 @@ interface TradePanelProps {
   livePrice: number;
   walletBalance: number;
   onOpenPosition: (p: Position) => void;
-  contract?: any; // Rich contract object from DB / Watchlist (exchange, name, lotsize, token, etc.)
+  contract?: any; // Rich contract object from DB / Watchlist
 }
 
 const RENDER_WS_URL = "wss://myt-backend-1.onrender.com/ws";
 
 export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, contract }: TradePanelProps) {
-  // 🌟 1. Smart Contract & Lot Size Resolver
   const staticInst = getInstrument(symbol);
   
-  // Extract exchange: Check contract -> static data -> auto infer MCX commodities
-  const exchange = useMemo(() => {
-    if (contract?.exchange || contract?.exch_seg) return contract.exchange || contract.exch_seg;
-    if (staticInst?.exchange) return staticInst.exchange;
-    const symUpper = symbol.toUpperCase();
-    if (symUpper.includes('CRUDE') || symUpper.includes('GOLD') || symUpper.includes('NATURAL') || symUpper.includes('SILVER')) {
-      return 'MCX';
-    }
-    return 'NSE';
-  }, [contract, staticInst, symbol]);
-
+  // 🌟 Extract metadata strictly from contract or static instrument
+  const exchange = contract?.exchange || contract?.exch_seg || staticInst?.exchange || 'NSE';
   const name = contract?.name || staticInst?.name || symbol;
+  const lotSize = Number(contract?.lotsize || contract?.lotSize || staticInst?.lotSize || 1);
+  const instrumentKey = contract?.instrumentKey || contract?.token || '';
 
-  // Auto-infer Lot Size if contract object is partial/missing
-  const lotSize = useMemo(() => {
-    const passedLot = Number(contract?.lotsize || contract?.lotSize || staticInst?.lotSize);
-    if (passedLot && passedLot > 0) return passedLot;
-
-    const symUpper = symbol.toUpperCase();
-    if (symUpper.includes('CRUDEOILM') || symUpper.includes('CRUDEOIL')) return 100;
-    if (symUpper.includes('GOLDM')) return 10;
-    if (symUpper.includes('GOLD')) return 100;
-    if (symUpper.includes('NATURAL') || symUpper.includes('NATGAS')) return 1250;
-    if (symUpper.includes('NIFTY')) return 25;
-    if (symUpper.includes('BANKNIFTY')) return 15;
-    
-    return 1;
-  }, [contract, staticInst, symbol]);
-
-  const instrumentKey = contract?.instrumentKey || contract?.token || (exchange === 'MCX' ? `MCX|${symbol}` : `NSE|${symbol}`);
-
-  // Dynamic Leverage Options based on Exchange (Android Parity)
   const isMcx = exchange.toUpperCase().includes('MCX');
   const availableLevs = isMcx ? [10, 50, 100, 200, 300, 400, 500] : [1, 3, 5, 7, 8, 10];
   const defaultLev = isMcx ? 100 : 4;
@@ -62,7 +35,6 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
   const [side, setSide] = useState<OrderSide>('BUY');
   const [orderType, setOrderType] = useState<OrderType>('MARKET');
   
-  // Real-time live price state
   const [currentLtp, setCurrentLtp] = useState<number>(livePrice || 0);
   const [limitPrice, setLimitPrice] = useState<string>(fmtNum(livePrice || 0));
   
@@ -72,7 +44,6 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
 
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Sync prop livePrice changes when parent updates
   useEffect(() => {
     if (livePrice > 0) {
       setCurrentLtp(livePrice);
@@ -82,7 +53,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
     }
   }, [livePrice, orderType]);
 
-  // 🌟 2. Direct WebSocket Connection for Continuous Live Price Sync
+  // 🌟 Direct Render WebSocket Subscription & Live LTP Fetching inside TradePanel
   useEffect(() => {
     function connectWS() {
       const ws = new WebSocket(RENDER_WS_URL);
@@ -90,23 +61,27 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
 
       ws.onopen = () => {
         const keys = [instrumentKey, symbol, contract?.token].filter(Boolean);
+        const tokens = [contract?.token, instrumentKey].filter(Boolean);
+        
         ws.send(JSON.stringify({
           action: "sub",
-          guid: "tradepanel_live_sub",
+          guid: "tradepanel_direct_sub",
           instrumentKeys: keys,
-          tokens: keys
+          tokens: tokens
         }));
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          
           if (data.type === "initial_ltps" && data.data) {
             const val = data.data[instrumentKey] || data.data[symbol] || data.data[contract?.token];
             if (val) setCurrentLtp(Number(val));
           } else {
             const key = data.instrument_key || data.instrumentKey || data.token || data.symbol || "";
             const ltpVal = data.ltp || data.price || data.last_price || 0;
+            
             if (key && ltpVal) {
               if (key === symbol || key === instrumentKey || key === contract?.token || key.includes(symbol)) {
                 setCurrentLtp(Number(ltpVal));
@@ -129,18 +104,16 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
     };
   }, [symbol, instrumentKey, contract]);
 
-  // Reset leverage whenever exchange changes
   useEffect(() => {
     setLeverage(isMcx ? 100 : 4);
   }, [exchange, isMcx]);
 
   const effectivePrice = orderType === 'MARKET' ? currentLtp : parseFloat(limitPrice) || currentLtp;
   
-  // 🌟 3. LOTS × LOT SIZE MULTIPLICATION LOGIC
+  // 🌟 Lots * LotSize Calculation
   const lotsNum = Math.max(1, parseInt(lots, 10) || 1);
   const totalUnits = lotsNum * lotSize;
 
-  // 🌟 4. Gold Scale Factor Logic (Android getGoldScaleFactor Parity)
   function getGoldScaleFactor(sym: string): number {
     const symUpper = sym.toUpperCase();
     if (symUpper.includes("GOLDM")) return 1.0;
@@ -148,7 +121,6 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
     return 1.0;
   }
 
-  // 🌟 5. Scaled Margin & Notional Calculation Logic
   const notional = useMemo(() => {
     const symUpper = symbol.toUpperCase();
     if (symUpper.includes("GOLD") || symUpper.includes("GOLDM")) {
@@ -194,7 +166,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
       symbol,
       name: name,
       side,
-      qty: totalUnits, // 🌟 Save total calculated quantity (Lots * LotSize)
+      qty: totalUnits,
       entryPrice: effectivePrice,
       leverage: `${leverage}x` as any,
       margin,
@@ -283,7 +255,6 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
         ))}
       </div>
 
-      {/* Limit price input */}
       {orderType === 'LIMIT' && (
         <div className="mb-4">
           <label className="mb-1 block text-[11px] uppercase tracking-wider text-gray-500">
@@ -298,7 +269,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
         </div>
       )}
 
-      {/* 🌟 Quantity & Lots View (Lots * LotSize) */}
+      {/* Quantity & Lots */}
       <div className="mb-4 grid grid-cols-2 gap-3">
         <div>
           <label className="mb-1 block text-[11px] uppercase tracking-wider text-gray-400 font-medium">
@@ -355,7 +326,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
         </div>
       </div>
 
-      {/* Summary Box */}
+      {/* Summary */}
       <div className="mb-4 space-y-1.5 rounded-xl border border-white/5 bg-black/40 p-3 text-xs">
         <Row label="Total Units / Size" value={`${totalUnits.toLocaleString('en-IN')}`} />
         <Row label="Notional Value" value={fmtINR(notional)} />
@@ -367,7 +338,6 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
         <Row label="Available Balance" value={fmtINR(walletBalance)} />
       </div>
 
-      {/* Errors / success */}
       {error && (
         <div className="mb-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
           {error}
@@ -379,7 +349,6 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
         </div>
       )}
 
-      {/* Submit Button */}
       <button
         type="button"
         onClick={handleSubmit}
