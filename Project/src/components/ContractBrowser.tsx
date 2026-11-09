@@ -1,13 +1,9 @@
 import { ChevronDown, Plus, Search, Star, BarChart2 } from 'lucide-react';
 import { useMemo, useState, useEffect, useRef } from 'react';
-import { fmtNum, fmtPct } from '@/lib/format';
 import type { DerivativeKind, Exchange } from '@/types';
 
 // 👉 Supabase DB File URL (Direct Database Access for Symbols)
 const DB_FILE_URL = "https://fnfynhgkdevxytxtfzrk.supabase.co/storage/v1/object/public/myt/angel_master.db";
-
-// 👉 Render WebSocket URL for Live LTP streaming
-const RENDER_WS_URL = "wss://myt-backend-1.onrender.com/ws";
 
 interface ContractBrowserProps {
   selected: string;
@@ -78,7 +74,6 @@ export function ContractBrowser({
 
   const [dbInstance, setDbInstance] = useState<any>(null);
   const [rawContracts, setRawContracts] = useState<any[]>([]);
-  const [livePrices, setLivePrices] = useState<Record<string, string | number>>({});
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -117,45 +112,23 @@ export function ContractBrowser({
     initDatabase();
   }, []);
 
-  // 2. Establish WebSocket Connection to Render for Live Prices
+  // 2. Local Dynamic WebSocket Connection (Render URL Removed)
   useEffect(() => {
     function connectWS() {
-      const ws = new WebSocket(RENDER_WS_URL);
+      if (typeof window === 'undefined') return;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log("🟢 Connected to Render Live WebSocket");
+        console.log("🟢 Connected to Live WebSocket");
         if (pendingKeysRef.current.keys.length > 0 && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
             instrumentKeys: pendingKeysRef.current.keys,
             tokens: pendingKeysRef.current.tokens
           }));
-          console.log(`📡 Sent ${pendingKeysRef.current.keys.length} keys on WS open.`);
-        }
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "initial_ltps" && data.data) {
-            setLivePrices(prev => ({ ...prev, ...data.data }));
-          } else if (data.instrument_key && data.ltp) {
-            const tokenPart = data.instrument_key.split('|')[1];
-            setLivePrices(prev => ({ 
-              ...prev, 
-              [data.instrument_key]: data.ltp, 
-              [tokenPart]: data.ltp,
-              [data.token]: data.ltp 
-            }));
-          } else if (data.token && data.ltp) {
-            setLivePrices(prev => ({ ...prev, [data.token]: data.ltp }));
-          } else if (data.symbol && data.ltp) {
-            setLivePrices(prev => ({ ...prev, [data.symbol]: data.ltp }));
-          } else {
-            setLivePrices(prev => ({ ...prev, ...data }));
-          }
-        } catch (e) {
-          console.error("WS Parse error:", e);
         }
       };
 
@@ -237,8 +210,6 @@ export function ContractBrowser({
 
           const rawExp = rowData.expiry ? String(rowData.expiry) : '';
           const tokenVal = String(rowData.token || '');
-          
-          // 🔥 Use exact exch_seg from DB (e.g. MCX_FO, NFO, NSE_EQ) to match Upstox WebSocket keys
           const exactSeg = seg || 'NSE';
           const instrumentKey = `${exactSeg}|${tokenVal}`;
 
@@ -310,7 +281,7 @@ export function ContractBrowser({
               <h2 className="font-display text-lg font-bold text-white">Options &amp; Futures</h2>
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              Supabase DB symbols &amp; Render WebSocket LTP Stream
+              Supabase DB symbols
             </p>
           </div>
           <button
@@ -402,16 +373,8 @@ export function ContractBrowser({
               {contracts.map((contract) => {
                 const selectedContract = selected === contract.symbol;
                 const watched = watchlist.some((w: any) => 
-                  typeof w === 'string' ? w === contract.symbol : w?.symbol === contract.symbol
+                  typeof w === 'string' ? w === contract.symbol : (w?.symbol === contract.symbol || w?.token === contract.token)
                 );
-                
-                // 🔥 Look up price by instrumentKey, token part, or full token
-                const currentPrice = 
-                  livePrices[contract.instrumentKey] || 
-                  livePrices[contract.token] || 
-                  livePrices[contract.instrumentKey.split('|')[1]] || 
-                  livePrices[contract.symbol] || 
-                  "0.00";
                 
                 return (
                   <div
@@ -455,15 +418,6 @@ export function ContractBrowser({
                       </div>
                     </button>
 
-                    <div className="text-right">
-                      <div className="font-mono text-sm font-semibold text-white">
-                        {fmtNum(Number(currentPrice))}
-                      </div>
-                      <div className="font-mono text-[11px] text-emerald-400">
-                        ▲ Live LTP
-                      </div>
-                    </div>
-
                     {/* Chart Button */}
                     <button
                       type="button"
@@ -478,7 +432,7 @@ export function ContractBrowser({
                       <BarChart2 className="h-4 w-4" />
                     </button>
 
-                    {/* Star / Watchlist Button */}
+                    {/* Star / Add to Watchlist Button (Sends full contract object with token & instrumentKey) */}
                     <button
                       type="button"
                       onClick={(e) => {
@@ -488,7 +442,7 @@ export function ContractBrowser({
                       className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border cursor-pointer ${
                         watched ? 'border-gold/30 bg-gold/10 text-gold' : 'border-white/5 text-gray-600'
                       }`}
-                      title="Add to Watchlist"
+                      title={watched ? "Added to Watchlist" : "Add to Watchlist"}
                     >
                       <Star className={`h-4 w-4 ${watched ? 'fill-gold' : ''}`} />
                     </button>
