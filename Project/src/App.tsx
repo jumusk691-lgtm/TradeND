@@ -32,7 +32,9 @@ function App() {
     'tradend:wallet',
     STARTING_BALANCE
   );
-  const [watchlist, setWatchlist] = usePersistentState<string[]>('tradend:watchlist', [
+  
+  // Watchlist supports both string symbols and rich contract objects from DB
+  const [watchlist, setWatchlist] = usePersistentState<any[]>('tradend:watchlist', [
     'NIFTY 50',
     'RELIANCE',
     'GOLD FUT',
@@ -96,19 +98,40 @@ function App() {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
   }, []);
 
-  // --- Watchlist handlers ---
+  // --- Watchlist handlers (Supports both string symbol or rich contract object) ---
   const toggleWatch = useCallback(
-    (symbol: string) => {
-      setWatchlist((prev) =>
-        prev.includes(symbol) ? prev.filter((s) => s !== symbol) : [...prev, symbol]
-      );
+    (contractOrSymbol: any) => {
+      const isObj = typeof contractOrSymbol === 'object' && contractOrSymbol !== null;
+      const targetSymbol = isObj ? contractOrSymbol.symbol : contractOrSymbol;
+
+      setWatchlist((prev) => {
+        const exists = prev.some((item) => 
+          typeof item === 'string' ? item === targetSymbol : item?.symbol === targetSymbol
+        );
+
+        if (exists) {
+          return prev.filter((item) => 
+            typeof item === 'string' ? item !== targetSymbol : item?.symbol !== targetSymbol
+          );
+        } else {
+          return [...prev, contractOrSymbol];
+        }
+      });
     },
     [setWatchlist]
   );
 
   const removeWatch = useCallback(
-    (symbol: string) => {
-      setWatchlist((prev) => prev.filter((s) => s !== symbol));
+    (symbolOrObject: any) => {
+      const targetSymbol = typeof symbolOrObject === 'object' && symbolOrObject !== null 
+        ? symbolOrObject.symbol 
+        : symbolOrObject;
+
+      setWatchlist((prev) => 
+        prev.filter((item) => 
+          typeof item === 'string' ? item !== targetSymbol : item?.symbol !== targetSymbol
+        )
+      );
     },
     [setWatchlist]
   );
