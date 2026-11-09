@@ -125,7 +125,6 @@ export function ContractBrowser({
 
       ws.onopen = () => {
         console.log("🟢 Connected to Render Live WebSocket");
-        // Automatically send pending subscription keys once WS opens successfully
         if (pendingKeysRef.current.keys.length > 0 && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
             instrumentKeys: pendingKeysRef.current.keys,
@@ -141,14 +140,17 @@ export function ContractBrowser({
           if (data.type === "initial_ltps" && data.data) {
             setLivePrices(prev => ({ ...prev, ...data.data }));
           } else if (data.instrument_key && data.ltp) {
+            const tokenPart = data.instrument_key.split('|')[1];
             setLivePrices(prev => ({ 
               ...prev, 
               [data.instrument_key]: data.ltp, 
-              [data.token]: data.ltp,
-              [data.instrument_key.split('|')[1]]: data.ltp 
+              [tokenPart]: data.ltp,
+              [data.token]: data.ltp 
             }));
           } else if (data.token && data.ltp) {
             setLivePrices(prev => ({ ...prev, [data.token]: data.ltp }));
+          } else if (data.symbol && data.ltp) {
+            setLivePrices(prev => ({ ...prev, [data.symbol]: data.ltp }));
           } else {
             setLivePrices(prev => ({ ...prev, ...data }));
           }
@@ -235,7 +237,10 @@ export function ContractBrowser({
 
           const rawExp = rowData.expiry ? String(rowData.expiry) : '';
           const tokenVal = String(rowData.token || '');
-          const instrumentKey = `${seg}|${tokenVal}`;
+          
+          // 🔥 Use exact exch_seg from DB (e.g. MCX_FO, NFO, NSE_EQ) to match Upstox WebSocket keys
+          const exactSeg = seg || 'NSE';
+          const instrumentKey = `${exactSeg}|${tokenVal}`;
 
           return {
             token: tokenVal,
@@ -257,10 +262,8 @@ export function ContractBrowser({
         const keys = parsed.map((p: any) => p.instrumentKey);
         const tokens = parsed.map((p: any) => p.token);
         
-        // Save keys in ref so onopen can send them if connection is established
         pendingKeysRef.current = { keys, tokens };
 
-        // Send tokens & keys to Render WebSocket if already open
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({ instrumentKeys: keys, tokens: tokens }));
         }
@@ -402,11 +405,12 @@ export function ContractBrowser({
                   typeof w === 'string' ? w === contract.symbol : w?.symbol === contract.symbol
                 );
                 
+                // 🔥 Look up price by instrumentKey, token part, or full token
                 const currentPrice = 
                   livePrices[contract.instrumentKey] || 
                   livePrices[contract.token] || 
+                  livePrices[contract.instrumentKey.split('|')[1]] || 
                   livePrices[contract.symbol] || 
-                  livePrices[contract.token] || 
                   "0.00";
                 
                 return (
