@@ -3,9 +3,7 @@ import { Splash } from '@/components/Splash';
 import { Dashboard } from '@/components/Dashboard';
 import { SupportModal } from '@/components/SupportModal';
 import { Ticker } from '@/components/Ticker';
-import { INSTRUMENTS } from '@/data/instruments';
 import { usePersistentState } from '@/hooks/usePersistentState';
-import { useLivePrices } from '@/hooks/useLivePrices';
 import { makeTx } from '@/components/WalletPanel';
 import type { DashboardTab, Position, WalletTx } from '@/types';
 
@@ -13,7 +11,7 @@ import type { DashboardTab, Position, WalletTx } from '@/types';
 import { initializeApp, getApps } from 'firebase/app';
 import { getDatabase, ref, onValue } from 'firebase/database';
 
-// Firebase configuration (uses existing or defaults to your project database)
+// Firebase configuration
 const firebaseConfig = {
   databaseURL: "https://tradend-default-rtdb.firebaseio.com/"
 };
@@ -33,12 +31,6 @@ function App() {
     STARTING_BALANCE
   );
   
-  // Watchlist supports both string symbols and rich contract objects from DB
-  const [watchlist, setWatchlist] = usePersistentState<any[]>('tradend:watchlist', [
-    'NIFTY 50',
-    'RELIANCE',
-    'GOLD FUT',
-  ]);
   const [positions, setPositions] = usePersistentState<Position[]>('tradend:positions', []);
   const [transactions, setTransactions] = usePersistentState<WalletTx[]>(
     'tradend:txns',
@@ -73,11 +65,6 @@ function App() {
     return () => unsubscribe();
   }, [setWalletBalance]);
 
-  // Live prices for the ticker (always running so it's live when dashboard shows)
-  const seeds: Record<string, number> = {};
-  for (const i of INSTRUMENTS) seeds[i.symbol] = i.price;
-  const livePrices = useLivePrices(seeds, 2200);
-
   // Lock body scroll while on splash
   useEffect(() => {
     if (view === 'splash') {
@@ -98,44 +85,6 @@ function App() {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
   }, []);
 
-  // --- Watchlist handlers (Supports both string symbol or rich contract object) ---
-  const toggleWatch = useCallback(
-    (contractOrSymbol: any) => {
-      const isObj = typeof contractOrSymbol === 'object' && contractOrSymbol !== null;
-      const targetSymbol = isObj ? contractOrSymbol.symbol : contractOrSymbol;
-
-      setWatchlist((prev) => {
-        const exists = prev.some((item) => 
-          typeof item === 'string' ? item === targetSymbol : item?.symbol === targetSymbol
-        );
-
-        if (exists) {
-          return prev.filter((item) => 
-            typeof item === 'string' ? item !== targetSymbol : item?.symbol !== targetSymbol
-          );
-        } else {
-          return [...prev, contractOrSymbol];
-        }
-      });
-    },
-    [setWatchlist]
-  );
-
-  const removeWatch = useCallback(
-    (symbolOrObject: any) => {
-      const targetSymbol = typeof symbolOrObject === 'object' && symbolOrObject !== null 
-        ? symbolOrObject.symbol 
-        : symbolOrObject;
-
-      setWatchlist((prev) => 
-        prev.filter((item) => 
-          typeof item === 'string' ? item !== targetSymbol : item?.symbol !== targetSymbol
-        )
-      );
-    },
-    [setWatchlist]
-  );
-
   // --- Position handlers ---
   const openPosition = useCallback(
     (p: Position) => {
@@ -146,11 +95,11 @@ function App() {
   );
 
   const closePosition = useCallback(
-    (id: string) => {
+    (id: string, currentPrice?: number) => {
       setPositions((prev) => {
         const pos = prev.find((p) => p.id === id);
         if (pos) {
-          const cur = livePrices[pos.symbol] ?? pos.currentPrice;
+          const cur = currentPrice ?? pos.currentPrice;
           const dir = pos.side === 'BUY' ? 1 : -1;
           const pnl = (cur - pos.entryPrice) * pos.qty * dir;
           setWalletBalance((b) => Math.max(0, b + pos.margin + pnl));
@@ -158,7 +107,7 @@ function App() {
         return prev.filter((p) => p.id !== id);
       });
     },
-    [setPositions, setWalletBalance, livePrices]
+    [setPositions, setWalletBalance]
   );
 
   // --- Wallet handlers ---
@@ -190,16 +139,12 @@ function App() {
         <Splash onEnter={handleEnter} />
       ) : (
         <>
-          <Ticker livePrices={livePrices} />
           <Dashboard
             activeTab={activeTab}
             onTabChange={setActiveTab}
             walletBalance={walletBalance}
-            watchlist={watchlist}
             positions={positions}
             transactions={transactions}
-            onToggleWatch={toggleWatch}
-            onRemoveWatch={removeWatch}
             onOpenPosition={openPosition}
             onClosePosition={closePosition}
             onDeposit={handleDeposit}
