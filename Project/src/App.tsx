@@ -23,6 +23,42 @@ const db = getDatabase(app);
 
 const STARTING_BALANCE = 50000;
 
+// Default initial watchlist items enriched with proper metadata/lot size
+const DEFAULT_WATCHLIST = [
+  {
+    symbol: 'NIFTY 50',
+    name: 'NIFTY 50 INDEX',
+    exchange: 'NSE',
+    exch_seg: 'NSE',
+    lotsize: 25,
+    token: '26000',
+    instrumentKey: 'NSE_INDEX|Nifty 50',
+    kind: 'INDEX'
+  },
+  {
+    symbol: 'CRUDEOIL26NOVFUT',
+    name: 'CRUDE OIL FUT',
+    exchange: 'MCX',
+    exch_seg: 'MCX',
+    lotsize: 100,
+    token: '254122',
+    instrumentKey: 'MCX|254122',
+    kind: 'FUT',
+    expiry: '19 Nov 2026'
+  },
+  {
+    symbol: 'GOLD26DECFUT',
+    name: 'GOLD FUT',
+    exchange: 'MCX',
+    exch_seg: 'MCX',
+    lotsize: 100,
+    token: '254125',
+    instrumentKey: 'MCX|254125',
+    kind: 'FUT',
+    expiry: '04 Dec 2026'
+  }
+];
+
 function App() {
   const [view, setView] = useState<'splash' | 'dashboard'>('splash');
   const [supportOpen, setSupportOpen] = useState(false);
@@ -33,12 +69,8 @@ function App() {
     STARTING_BALANCE
   );
   
-  // Watchlist supports both string symbols and rich contract objects from DB
-  const [watchlist, setWatchlist] = usePersistentState<any[]>('tradend:watchlist', [
-    'NIFTY 50',
-    'RELIANCE',
-    'GOLD FUT',
-  ]);
+  // Watchlist supports rich contract objects with token, lotsize, etc.
+  const [watchlist, setWatchlist] = usePersistentState<any[]>('tradend:watchlist', DEFAULT_WATCHLIST);
   const [positions, setPositions] = usePersistentState<Position[]>('tradend:positions', []);
   const [transactions, setTransactions] = usePersistentState<WalletTx[]>(
     'tradend:txns',
@@ -98,7 +130,7 @@ function App() {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
   }, []);
 
-  // --- Watchlist handlers (Supports both string symbol or rich contract object) ---
+  // --- Watchlist handlers (Ensures full contract object is saved) ---
   const toggleWatch = useCallback(
     (contractOrSymbol: any) => {
       const isObj = typeof contractOrSymbol === 'object' && contractOrSymbol !== null;
@@ -114,7 +146,14 @@ function App() {
             typeof item === 'string' ? item !== targetSymbol : item?.symbol !== targetSymbol
           );
         } else {
-          return [...prev, contractOrSymbol];
+          // If a string symbol was passed, wrap it as a complete object
+          const newObj = isObj ? contractOrSymbol : {
+            symbol: targetSymbol,
+            name: targetSymbol,
+            exchange: 'NSE',
+            lotsize: 1
+          };
+          return [...prev, newObj];
         }
       });
     },
