@@ -112,7 +112,7 @@ export function ContractBrowser({
     initDatabase();
   }, []);
 
-  // 2. Local Dynamic WebSocket Connection (Render URL Removed)
+  // 2. Local Dynamic WebSocket Connection (Updated to send Watchlist keys dynamically)
   useEffect(() => {
     function connectWS() {
       if (typeof window === 'undefined') return;
@@ -124,10 +124,21 @@ export function ContractBrowser({
 
       ws.onopen = () => {
         console.log("🟢 Connected to Live WebSocket");
-        if (pendingKeysRef.current.keys.length > 0 && ws.readyState === WebSocket.OPEN) {
+        
+        // Combine search keys and watchlist keys
+        const watchKeys = watchlist.map((w: any) => w.instrumentKey).filter(Boolean);
+        const watchTokens = watchlist.map((w: any) => w.token).filter(Boolean);
+        
+        const searchKeys = pendingKeysRef.current.keys;
+        const searchTokens = pendingKeysRef.current.tokens;
+
+        const combinedKeys = Array.from(new Set([...searchKeys, ...watchKeys]));
+        const combinedTokens = Array.from(new Set([...searchTokens, ...watchTokens]));
+
+        if (combinedKeys.length > 0 && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
-            instrumentKeys: pendingKeysRef.current.keys,
-            tokens: pendingKeysRef.current.tokens
+            instrumentKeys: combinedKeys,
+            tokens: combinedTokens
           }));
         }
       };
@@ -146,7 +157,7 @@ export function ContractBrowser({
     return () => {
       if (wsRef.current) wsRef.current.close();
     };
-  }, []);
+  }, [watchlist]); // Watchlist dependency added so new items auto-subscribe via WebSocket
 
   // 3. Query Symbols directly from local SQLite database instance
   const loadSymbolsFromDb = (db: any, exFilter: string, kindFilter: string, searchQuery: string) => {
@@ -235,8 +246,14 @@ export function ContractBrowser({
         
         pendingKeysRef.current = { keys, tokens };
 
+        const watchKeys = watchlist.map((w: any) => w.instrumentKey).filter(Boolean);
+        const combinedKeys = Array.from(new Set([...keys, ...watchKeys]));
+
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ instrumentKeys: keys, tokens: tokens }));
+          wsRef.current.send(JSON.stringify({ 
+            instrumentKeys: combinedKeys, 
+            tokens: tokens 
+          }));
         }
       } else {
         setRawContracts([]);
@@ -432,7 +449,7 @@ export function ContractBrowser({
                       <BarChart2 className="h-4 w-4" />
                     </button>
 
-                    {/* Star / Add to Watchlist Button (Sends full contract object with token & instrumentKey) */}
+                    {/* Star / Add to Watchlist Button */}
                     <button
                       type="button"
                       onClick={(e) => {
