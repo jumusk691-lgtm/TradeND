@@ -3,8 +3,8 @@ import { getInstrument } from '@/data/instruments';
 import { fmtNum, fmtPct } from '@/lib/format';
 
 interface WatchlistPanelProps {
-  watchlist: string[];
-  livePrices: Record<string, number>;
+  watchlist: any[]; // Supports both string symbols and rich contract objects from DB
+  livePrices: Record<string, string | number>;
   onSelect: (symbol: string) => void;
   onRemove: (symbol: string) => void;
   selected: string;
@@ -13,7 +13,6 @@ interface WatchlistPanelProps {
 export function WatchlistPanel({
   watchlist,
   livePrices,
-  onSelect,
   onRemove,
   selected,
 }: WatchlistPanelProps) {
@@ -37,27 +36,62 @@ export function WatchlistPanel({
         </div>
       ) : (
         <div className="space-y-1.5 max-h-80 overflow-y-auto scrollbar-thin">
-          {watchlist.map((sym) => {
+          {watchlist.map((item) => {
+            // Handle both rich contract object or string symbol
+            const isObj = typeof item === 'object' && item !== null;
+            const sym = isObj ? item.symbol : item;
+            const name = isObj ? item.name : sym;
+            const exchange = isObj ? item.exchange : 'NSE';
+            const instrumentKey = isObj ? item.instrumentKey : '';
+            const token = isObj ? item.token : '';
+
+            // Fallback to static instrument data if needed
             const inst = getInstrument(sym);
-            const price = livePrices[sym] ?? inst.price;
-            const chgAbs = price - inst.prevClose;
-            const chgPct = (chgAbs / inst.prevClose) * 100;
+
+            // Fetch Live Price from Render WebSocket cache using instrumentKey, token, or symbol
+            const priceVal = 
+              (instrumentKey && livePrices[instrumentKey]) || 
+              (token && livePrices[token]) || 
+              (sym && livePrices[sym]) || 
+              inst.price || 
+              0;
+
+            const price = Number(priceVal);
+            const prevClose = inst.prevClose || price || 1;
+            const chgAbs = price - prevClose;
+            const chgPct = (chgAbs / prevClose) * 100;
             const up = chgAbs >= 0;
             const isSel = selected === sym;
+
             return (
               <div
-                key={sym}
-                onClick={() => onSelect(sym)}
-                className={`group flex items-center justify-between rounded-lg border px-3 py-2 cursor-pointer transition-colors ${
+                key={instrumentKey || sym}
+                className={`group flex items-center justify-between rounded-lg border px-3 py-2 transition-colors ${
                   isSel
                     ? 'border-accent/30 bg-accent/10'
                     : 'border-white/5 bg-black/30 hover:border-white/10'
                 }`}
               >
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-white truncate">{sym}</div>
-                  <div className="text-[11px] text-gray-500">{inst.exchange}</div>
+                <div className="min-w-0 flex-1 cursor-pointer" onClick={() => onSelect(sym)}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-white truncate">{name}</span>
+                    {isObj && item.kind && (
+                      <span className="rounded bg-accent/20 px-1 py-0.2 text-[9px] font-bold text-accent-200">
+                        {item.kind}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                    <span>{exchange}</span>
+                    {isObj && item.expiry && (
+                      <>
+                        <span>·</span>
+                        <span>{item.expiry}</span>
+                      </>
+                    )}
+                  </div>
                 </div>
+
                 <div className="flex items-center gap-3">
                   <div className="text-right">
                     <div className="font-mono text-sm text-white">{fmtNum(price)}</div>
@@ -68,11 +102,12 @@ export function WatchlistPanel({
                     </div>
                   </div>
                   <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       onRemove(sym);
                     }}
-                    className="rounded p-1 text-gray-600 opacity-0 group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-400 transition-all"
+                    className="rounded p-1 text-gray-600 opacity-0 group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-400 transition-all cursor-pointer"
                     aria-label="Remove from watchlist"
                   >
                     <X className="h-3.5 w-3.5" />
