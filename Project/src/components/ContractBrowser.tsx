@@ -2,8 +2,9 @@ import { ChevronDown, Plus, Search, Star, BarChart2 } from 'lucide-react';
 import { useMemo, useState, useEffect, useRef } from 'react';
 import type { DerivativeKind, Exchange } from '@/types';
 
-// 👉 Supabase DB File URL (Direct Database Access for Symbols)
+// 👉 Supabase DB File URL & Render WS URL
 const DB_FILE_URL = "https://fnfynhgkdevxytxtfzrk.supabase.co/storage/v1/object/public/myt/angel_master.db";
+const RENDER_WS_URL = "wss://myt-backend-ghpx.onrender.com/ws";
 
 interface ContractBrowserProps {
   selected: string;
@@ -112,22 +113,17 @@ export function ContractBrowser({
     initDatabase();
   }, []);
 
-  // 2. Local Dynamic WebSocket Connection (Updated to send Watchlist keys dynamically)
+  // 2. Direct Render WebSocket Connection matching APK streaming engine
   useEffect(() => {
     function connectWS() {
-      if (typeof window === 'undefined') return;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
-
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(RENDER_WS_URL);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log("🟢 Connected to Live WebSocket");
+        console.log("🟢 ContractBrowser Connected to Render WS Engine");
         
-        // Combine search keys and watchlist keys
-        const watchKeys = watchlist.map((w: any) => w.instrumentKey).filter(Boolean);
-        const watchTokens = watchlist.map((w: any) => w.token).filter(Boolean);
+        const watchKeys = watchlist.map((w: any) => w.instrumentKey || w.token).filter(Boolean);
+        const watchTokens = watchlist.map((w: any) => w.token || w.instrumentKey).filter(Boolean);
         
         const searchKeys = pendingKeysRef.current.keys;
         const searchTokens = pendingKeysRef.current.tokens;
@@ -137,6 +133,8 @@ export function ContractBrowser({
 
         if (combinedKeys.length > 0 && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
+            action: "sub",
+            guid: "upstox_sub_request",
             instrumentKeys: combinedKeys,
             tokens: combinedTokens
           }));
@@ -157,7 +155,7 @@ export function ContractBrowser({
     return () => {
       if (wsRef.current) wsRef.current.close();
     };
-  }, [watchlist]); // Watchlist dependency added so new items auto-subscribe via WebSocket
+  }, [watchlist]);
 
   // 3. Query Symbols directly from local SQLite database instance
   const loadSymbolsFromDb = (db: any, exFilter: string, kindFilter: string, searchQuery: string) => {
@@ -246,11 +244,13 @@ export function ContractBrowser({
         
         pendingKeysRef.current = { keys, tokens };
 
-        const watchKeys = watchlist.map((w: any) => w.instrumentKey).filter(Boolean);
+        const watchKeys = watchlist.map((w: any) => w.instrumentKey || w.token).filter(Boolean);
         const combinedKeys = Array.from(new Set([...keys, ...watchKeys]));
 
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({ 
+            action: "sub",
+            guid: "upstox_sub_request",
             instrumentKeys: combinedKeys, 
             tokens: tokens 
           }));
@@ -400,7 +400,6 @@ export function ContractBrowser({
                       selectedContract ? 'border-accent/40 bg-accent/10' : 'border-white/5 bg-white/[0.015]'
                     }`}
                   >
-                    {/* Symbol Click / Selection Button */}
                     <button
                       type="button"
                       onClick={() => onSelect(contract.symbol)}
@@ -415,7 +414,6 @@ export function ContractBrowser({
                         </span>
                       </div>
                       
-                      {/* Clean Meta: Exchange, Expiry, Strike & Lot Size */}
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
                         <span className="text-gold font-medium">{contract.exchange}</span>
                         {contract.expiry && (
@@ -435,7 +433,6 @@ export function ContractBrowser({
                       </div>
                     </button>
 
-                    {/* Chart Button */}
                     <button
                       type="button"
                       onClick={(e) => {
@@ -449,7 +446,6 @@ export function ContractBrowser({
                       <BarChart2 className="h-4 w-4" />
                     </button>
 
-                    {/* Star / Add to Watchlist Button */}
                     <button
                       type="button"
                       onClick={(e) => {
@@ -464,7 +460,6 @@ export function ContractBrowser({
                       <Star className={`h-4 w-4 ${watched ? 'fill-gold' : ''}`} />
                     </button>
 
-                    {/* Trade Button */}
                     <button
                       type="button"
                       onClick={(e) => {
@@ -492,3 +487,6 @@ export function ContractBrowser({
     </section>
   );
 }
+
+// 👉 Mandatory Default Export to prevent Rollup/Vercel Build Error
+export default ContractBrowser;
