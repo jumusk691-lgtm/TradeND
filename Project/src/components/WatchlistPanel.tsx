@@ -147,7 +147,7 @@ export function WatchlistPanel({
       <div className="flex items-center justify-between mb-3">
         <h3 className="font-display text-lg font-bold text-white flex items-center gap-2">
           <Star className="h-5 w-5 text-gold fill-gold" />
-          Watchlist 
+          Watchlist &amp; Live LTP Checker
           <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs font-medium text-gray-400">
             {watchlist.length}
           </span>
@@ -217,6 +217,9 @@ export function WatchlistPanel({
                         <span>·</span>
                         <span>Lot: <strong className="text-white">{item.lotsize}</strong></span>
                       </>
+                    )}
+                    {tokenKey && (
+                      <span className="text-[10px] text-gray-500 font-mono">(Token: {tokenKey})</span>
                     )}
                   </div>
                 </div>
