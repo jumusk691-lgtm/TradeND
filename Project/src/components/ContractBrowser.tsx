@@ -285,8 +285,9 @@ export function ContractBrowser({
             </p>
           </div>
           <button
+            type="button"
             onClick={() => setExpanded((open) => !open)}
-            className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-semibold text-gray-400 hover:text-white transition-colors"
+            className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-semibold text-gray-400 hover:text-white transition-colors cursor-pointer"
           >
             {expanded ? 'Hide' : 'Show'}
             <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
@@ -300,8 +301,9 @@ export function ContractBrowser({
                 {exchanges.map((item) => (
                   <button
                     key={item}
+                    type="button"
                     onClick={() => setExchange(item)}
-                    className={`rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
+                    className={`rounded-md px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
                       exchange === item ? 'bg-accent text-white' : 'text-gray-500 hover:text-white'
                     }`}
                   >
@@ -313,8 +315,9 @@ export function ContractBrowser({
                 {kinds.map((item) => (
                   <button
                     key={item}
+                    type="button"
                     onClick={() => setKind(item)}
-                    className={`rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
+                    className={`rounded-md px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
                       kind === item ? 'bg-gold text-black' : 'text-gray-500 hover:text-white'
                     }`}
                   >
@@ -330,7 +333,7 @@ export function ContractBrowser({
               <select
                 value={selectedExpiry}
                 onChange={(e) => setSelectedExpiry(e.target.value)}
-                className="rounded-lg border border-white/10 bg-black/60 px-3 py-2 text-xs font-bold text-accent focus:outline-none"
+                className="rounded-lg border border-white/10 bg-black/60 px-3 py-2 text-xs font-bold text-accent focus:outline-none cursor-pointer"
               >
                 <option value="ALL">All Expiries</option>
                 {availableExpiries.map((item) => (
@@ -379,9 +382,11 @@ export function ContractBrowser({
                       selectedContract ? 'border-accent/40 bg-accent/10' : 'border-white/5 bg-white/[0.015]'
                     }`}
                   >
+                    {/* Symbol Click / Selection Button */}
                     <button
+                      type="button"
                       onClick={() => onSelect(contract.symbol)}
-                      className="min-w-0 flex-1 text-left"
+                      className="min-w-0 flex-1 text-left cursor-pointer bg-transparent border-none p-0"
                     >
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate text-sm font-bold text-white sm:text-[15px]">
@@ -417,18 +422,28 @@ export function ContractBrowser({
                       </div>
                     </div>
 
+                    {/* Star / Watchlist Button */}
                     <button
-                      onClick={() => onAddWatch(contract)}
-                      className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border ${
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddWatch(contract);
+                      }}
+                      className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border cursor-pointer ${
                         watched ? 'border-gold/30 bg-gold/10 text-gold' : 'border-white/5 text-gray-600'
                       }`}
                     >
                       <Star className={`h-4 w-4 ${watched ? 'fill-gold' : ''}`} />
                     </button>
 
+                    {/* Trade Button */}
                     <button
-                      onClick={() => onSelect(contract.symbol)}
-                      className="inline-flex h-8 items-center gap-1 rounded-lg bg-gold px-2.5 text-[11px] font-extrabold text-black"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelect(contract.symbol);
+                      }}
+                      className="inline-flex h-8 items-center gap-1 rounded-lg bg-gold px-2.5 text-[11px] font-extrabold text-black cursor-pointer"
                     >
                       <Plus className="h-3.5 w-3.5" />
                       Trade
