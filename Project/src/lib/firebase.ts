@@ -1,13 +1,13 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getDatabase } from 'firebase/database';
+import { getAuth } from 'firebase/auth'; // 👈 Firebase Auth इम्पोर्ट करें
 
-// 🌟 Project Firebase Realtime Database Configuration
 const firebaseConfig = {
   databaseURL: "https://trade-f600a-default-rtdb.firebaseio.com/"
 };
 
-// Initialize Firebase app safely (prevents duplicate initialization)
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
-// Export database instance
+// Export both database and auth instances
 export const db = getDatabase(app);
+export const auth = getAuth(app); // 👈 यहाँ auth को एक्सपोर्ट करें
