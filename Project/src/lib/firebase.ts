@@ -11,3 +11,4 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 
 // Export database and auth instances
 export const db = getDatabase(app);
+export const auth = getAuth(app);
