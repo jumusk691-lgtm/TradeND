@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
+import useSWR from 'swr';
 import {
   Zap,
   ArrowUpCircle,
@@ -9,10 +10,10 @@ import {
 import { getInstrument } from '@/data/instruments';
 import { fmtINR, fmtNum, uid } from '@/lib/format';
 import {
-  calculateMargin,
   calculateNotional,
   getGoldContractGrams,
 } from '@/lib/tradingMath';
+import { fetchUpstoxMargin, type MarginRequest, type MarginResult } from '@/lib/upstox';
 
 import {
   type OrderSide,
@@ -379,7 +380,24 @@ export function TradePanel({
     [symbol, effectivePrice, totalUnits]
   );
 
-  const margin = calculateMargin(notional, leverage);
+  const estimatedMargin = calculateMargin(notional, leverage);
+  const marginRequest = useMemo<MarginRequest | null>(() => {
+    if (!instrumentKey || effectivePrice <= 0 || totalUnits <= 0) return null;
+    return {
+      instrumentKey,
+      quantity: totalUnits,
+      transactionType: side,
+      product: product === 'DELIVERY' ? 'D' : 'I',
+      price: effectivePrice,
+    };
+  }, [instrumentKey, effectivePrice, totalUnits, side, product]);
+
+  const { data: marginData, error: marginError, isLoading: marginLoading } = useSWR<MarginResult>(
+    marginRequest ? ['upstox-margin', marginRequest] : null,
+    ([, request]) => fetchUpstoxMargin(request as MarginRequest),
+    { keepPreviousData: false, revalidateOnFocus: false }
+  );
+  const requiredMargin = marginData?.finalMargin ?? 0;
 
   // =========================================
   // MAX LOTS BY BALANCE
@@ -451,8 +469,13 @@ export function TradePanel({
       }
     }
 
-    if (margin > walletBalance) {
-      setError(`Insufficient balance. Margin required ${fmtINR(margin)}, available ${fmtINR(walletBalance)}.`);
+    if (marginLoading || marginError || !marginData) {
+      setError(marginError instanceof Error ? marginError.message : 'Waiting for the live Upstox margin calculation.');
+      return;
+    }
+
+    if (requiredMargin > walletBalance) {
+      setError(`Insufficient balance. Margin required ${fmtINR(requiredMargin)}, available ${fmtINR(walletBalance)}.`);
       return;
     }
 
@@ -475,10 +498,10 @@ export function TradePanel({
       entryPrice: effectivePrice,
       currentPrice: currentLtp,
       leverage: `${leverage}X`,
-      margin,
+      margin: requiredMargin,
       notional,
       buy_price: effectivePrice,
-      margin_blocked: margin,
+      margin_blocked: requiredMargin,
       scale_factor: scaleFactor,
       status: 'OPEN',
       instrumenttype: contract?.instrumenttype ?? contract?.kind ?? '',
@@ -499,7 +522,8 @@ export function TradePanel({
   }
 
   const insufficient =
-    margin > walletBalance ||
+    !marginData ||
+    requiredMargin > walletBalance ||
     maxLotsByBalance < lotsNum;
 
   // =========================================
@@ -764,8 +788,8 @@ export function TradePanel({
         />
 
         <Row
-          label={`Margin (${leverage}x)`}
-          value={fmtINR(margin)}
+          label={`Required Margin (${side})`}
+          value={marginLoading ? 'Calculating…' : marginData ? fmtINR(requiredMargin) : 'Unavailable'}
           highlight={insufficient ? 'text-rose-400' : 'text-white'}
         />
 
@@ -791,6 +815,12 @@ export function TradePanel({
       )}
 
       {/* Submit */}
+
+      <div className={`mb-2 rounded-lg border px-3 py-2 text-center text-xs ${
+        insufficient ? 'border-rose-500/30 bg-rose-500/10 text-rose-300' : 'border-white/10 bg-black/30 text-gray-300'
+      }`}>
+        {marginLoading ? 'Calculating live Upstox margin…' : marginData ? `${side} margin required: ${fmtINR(requiredMargin)}` : 'Live margin unavailable'}
+      </div>
 
       <button
         type="button"
