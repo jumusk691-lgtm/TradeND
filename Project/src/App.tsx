@@ -34,7 +34,7 @@ const app = getApps().length === 0
 
 const db = getDatabase(app);
 
-const STARTING_BALANCE = 50000;
+const STARTING_BALANCE = 0;
 
 function App() {
   const [view, setView] = useState<'splash' | 'dashboard'>('splash');
