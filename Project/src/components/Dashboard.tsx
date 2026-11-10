@@ -1,5 +1,5 @@
 
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 
 import { INSTRUMENTS, getInstrument } from '@/data/instruments';
 import { DERIVATIVE_CONTRACTS } from '@/data/derivatives';
@@ -97,8 +97,25 @@ export function Dashboard(props: DashboardProps) {
     return prices;
   }, []);
 
-  // Live market prices.
-  const livePrices = useLivePrices(seeds, 2200);
+  // Live market prices, including prices received by an open TradePanel.
+  const simulatedPrices = useLivePrices(seeds, 2200);
+  const [syncedPrices, setSyncedPrices] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    const handlePrice = (event: Event) => {
+      const detail = (event as CustomEvent<{ symbol?: string; price?: number }>).detail;
+      if (!detail?.symbol || !Number.isFinite(detail.price) || detail.price <= 0) return;
+      setSyncedPrices((previous) => ({ ...previous, [detail.symbol]: detail.price as number }));
+    };
+
+    window.addEventListener('tradend:price', handlePrice);
+    return () => window.removeEventListener('tradend:price', handlePrice);
+  }, []);
+
+  const livePrices = useMemo(
+    () => ({ ...simulatedPrices, ...syncedPrices }),
+    [simulatedPrices, syncedPrices],
+  );
 
   // Find selected instrument safely.
   const selectedInstrument = useMemo(() => {

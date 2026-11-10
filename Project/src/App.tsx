@@ -7,6 +7,7 @@ import { INSTRUMENTS } from '@/data/instruments';
 import { usePersistentState } from '@/hooks/usePersistentState';
 import { useLivePrices } from '@/hooks/useLivePrices';
 import { makeTx } from '@/components/WalletPanel';
+import { calculatePositionPnl } from '@/lib/trading';
 import type { DashboardTab, Position, WalletTx } from '@/types';
 
 import { initializeApp, getApps } from 'firebase/app';
@@ -501,10 +502,8 @@ setPositions((prev) => {
       const cur =  
         livePrices[pos.symbol] ?? pos.currentPrice;  
 
-      const dir = pos.side === 'BUY' ? 1 : -1;  
+      const pnl = calculatePositionPnl(pos, cur);
 
-      const pnl =  
-        (cur - pos.entryPrice) * pos.qty * dir;  
 
       setWalletBalance((balance) =>  
         Math.max(0, balance + pos.margin + pnl)  

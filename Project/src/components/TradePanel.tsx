@@ -8,6 +8,7 @@ import {
 
 import { getInstrument } from '@/data/instruments';
 import { fmtINR, fmtNum, uid } from '@/lib/format';
+import { calculateMargin, calculateNotional } from '@/lib/trading';
 
 import {
   type OrderSide,
@@ -204,7 +205,9 @@ export function TradePanel({
               data.data[token];
 
             if (value !== undefined && Number(value) > 0) {
-              setCurrentLtp(Number(value));
+              const nextPrice = Number(value);
+              setCurrentLtp(nextPrice);
+              window.dispatchEvent(new CustomEvent('tradend:price', { detail: { symbol, price: nextPrice } }));
             }
 
             return;
@@ -232,7 +235,9 @@ export function TradePanel({
             key === token;
 
           if (matches) {
-            setCurrentLtp(Number(ltpValue));
+            const nextPrice = Number(ltpValue);
+            setCurrentLtp(nextPrice);
+            window.dispatchEvent(new CustomEvent('tradend:price', { detail: { symbol, price: nextPrice } }));
           }
 
         } catch (error) {
@@ -359,31 +364,12 @@ export function TradePanel({
   // APK NOTIONAL CALCULATION
   // =========================================
 
-  const notional = useMemo(() => {
+  const notional = useMemo(
+    () => calculateNotional(effectivePrice, totalUnits, symbol, scaleFactor),
+    [effectivePrice, totalUnits, symbol, scaleFactor],
+  );
 
-    if (effectivePrice <= 0) return 0;
-
-    if (isGold) {
-      return (
-        (effectivePrice / 10) *
-        totalUnits *
-        scaleFactor
-      );
-    }
-
-    return effectivePrice * totalUnits;
-
-  }, [
-    symbol,
-    effectivePrice,
-    totalUnits,
-    isGold,
-    scaleFactor
-  ]);
-
-  const margin = leverage > 0
-    ? notional / leverage
-    : 0;
+  const margin = calculateMargin(notional, leverage);
 
   // =========================================
   // MAX LOTS BY BALANCE
@@ -399,12 +385,7 @@ export function TradePanel({
       return 0;
     }
 
-    let unitCost = effectivePrice;
-
-    if (isGold) {
-      unitCost =
-        (effectivePrice / 10) * scaleFactor;
-    }
+    const unitCost = calculateNotional(effectivePrice, 1, symbol, scaleFactor);
 
     if (unitCost <= 0) return 0;
 

@@ -1,5 +1,6 @@
 import { X, TrendingUp, TrendingDown, Inbox } from 'lucide-react';
 import { fmtINR, fmtNum, fmtPct } from '@/lib/format';
+import { calculatePositionPnl } from '@/lib/trading';
 import type { Position } from '@/types';
 
 interface PositionsPanelProps {
@@ -11,9 +12,10 @@ interface PositionsPanelProps {
 export function PositionsPanel({ positions, livePrices, onClose }: PositionsPanelProps) {
   const enriched = positions.map((p) => {
     const cur = livePrices[p.symbol] ?? p.currentPrice;
-    const dir = p.side === 'BUY' ? 1 : -1;
-    const pnl = (cur - p.entryPrice) * p.qty * dir;
-    const pnlPct = ((cur - p.entryPrice) / p.entryPrice) * 100 * dir;
+    const pnl = calculatePositionPnl(p, cur);
+    const pnlPct = p.entryPrice > 0
+      ? (pnl / Math.max(1, p.margin)) * 100
+      : 0;
     return { ...p, currentPrice: cur, pnl, pnlPct };
   });
 

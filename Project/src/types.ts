@@ -69,6 +69,10 @@ export interface Position {
   leverage: Leverage;
   margin: number;
   currentPrice: number;
+  scale_factor?: number;
+  lots?: number;
+  lotsize?: string | number;
+  notional?: number;
 }
 
 // 🌟 Updated WatchlistItem to support token, lotsize, exchange, etc.
