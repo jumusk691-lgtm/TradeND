@@ -39,7 +39,7 @@ export interface Candle {
   close: number;
 }
 
-export type Timeframe = '1M' | '3M' | '5M' | '15M' | '30M' | '1H' | '1D' | '1W';
+export type Timeframe = '1M' | '3M' | '5M' | '15M' | '30M' | '1H' | '1D' | '1W' | '60D';
 
 // Indian equity markets (NSE/BSE) support 1X–10X leverage.
 export type EquityLeverage = '1X' | '2X' | '3X' | '5X' | '7X' | '10X';
@@ -130,7 +130,7 @@ export interface SessionState {
 export type DashboardTab = 'markets' | 'wallet' | 'positions';
 
 export const EXCHANGES: Exchange[] = ['NSE', 'BSE', 'MCX'];
-export const TIMEFRAMES: Timeframe[] = ['1M', '3M', '5M', '15M', '30M', '1H', '1D', '1W'];
+export const TIMEFRAMES: Timeframe[] = ['1M', '3M', '5M', '15M', '30M', '1H', '1D', '1W', '60D'];
 
 export const EQUITY_LEVERAGES: EquityLeverage[] = ['1X', '2X', '3X', '5X', '7X', '10X'];
 export const COMMODITY_LEVERAGES: CommodityLeverage[] = [

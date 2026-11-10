@@ -50,6 +50,17 @@ function formatSymbolName(rawSymbol: string): string {
   try {
     if (!rawSymbol) return '';
 
+    const compact = rawSymbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const readableGoldNames: Record<string, string> = {
+      GOLDGUNIA: 'GOLDGUNIA · 8g Gold',
+      GOLDTEN: 'GOLDTEN · 10g Gold',
+      GOLDM: 'GOLDM · 100g Gold',
+      GOLD: 'GOLD · 1kg Gold',
+    };
+    for (const [key, label] of Object.entries(readableGoldNames)) {
+      if (compact === key) return label;
+    }
+
     const monthNames = [
       'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
       'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'

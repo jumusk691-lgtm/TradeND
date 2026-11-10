@@ -29,6 +29,7 @@ const CANDLE_COUNT: Record<Timeframe, number> = {
   '1H': 500,
   '1D': 500,
   '1W': 500,
+  '60D': 60,
 };
 
 const STEP_VOL: Record<Timeframe, number> = {
@@ -51,6 +52,7 @@ const TF_MINUTES: Record<Timeframe, number> = {
   '1H': 60,
   '1D': 1440,
   '1W': 10080,
+  '60D': 1440,
 };
 
 export function generateCandles(
