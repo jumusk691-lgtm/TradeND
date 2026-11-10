@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react';
+TypeScript
+
+import { useMemo, useState, useCallback } from 'react';
 import { INSTRUMENTS, getInstrument } from '@/data/instruments';
 import { DERIVATIVE_CONTRACTS } from '@/data/derivatives';
 import { CandleChart } from '@/components/CandleChart';
@@ -16,11 +18,11 @@ interface DashboardProps {
   activeTab: DashboardTab;
   onTabChange: (t: DashboardTab) => void;
   walletBalance: number;
-  watchlist: string[];
+  watchlist: any[];
   positions: Position[];
   transactions: WalletTx[];
-  onToggleWatch: (s: string) => void;
-  onRemoveWatch: (s: string) => void;
+  onToggleWatch: (contract: any) => void;
+  onRemoveWatch: (contract: any) => void;
   onOpenPosition: (p: Position) => void;
   onClosePosition: (id: string) => void;
   onDeposit: (amount: number, method: string) => void;
@@ -49,19 +51,75 @@ export function Dashboard(props: DashboardProps) {
 
   const [selected, setSelected] = useState<string>('NIFTY 50');
 
+  // Store the complete selected contract
+  const [selectedContract, setSelectedContract] = useState<any>(null);
+
+  // Handle contract selection from ContractBrowser
+  const handleSelectContract = useCallback((contractOrSymbol: any) => {
+    if (!contractOrSymbol) return;
+
+    if (typeof contractOrSymbol === 'object') {
+      setSelectedContract({ ...contractOrSymbol });
+
+      const symbol = contractOrSymbol.symbol;
+
+      if (symbol) {
+        setSelected(symbol);
+      }
+
+      return;
+    }
+
+    setSelected(String(contractOrSymbol));
+
+    setSelectedContract((previous: any) => {
+      if (previous?.symbol === String(contractOrSymbol)) {
+        return previous;
+      }
+
+      return null;
+    });
+  }, []);
+
   // Build seed prices from instruments
   const seeds = useMemo(() => {
     const m: Record<string, number> = {};
+
     for (const instrument of [...INSTRUMENTS, ...DERIVATIVE_CONTRACTS]) {
       m[instrument.symbol] = instrument.price;
     }
+
     return m;
   }, []);
 
   const livePrices = useLivePrices(seeds, 2200);
+
   const selectedInstrument = getInstrument(selected);
-  const livePrice = livePrices[selected] ?? selectedInstrument.price;
-  const basePrice = seeds[selected] ?? selectedInstrument.price;
+
+  const livePrice =
+    livePrices[selected] ?? selectedInstrument.price;
+
+  const basePrice =
+    seeds[selected] ?? selectedInstrument.price;
+
+  // Pass complete contract to TradePanel
+  const activeContract = useMemo(() => {
+    if (selectedContract?.symbol === selected) {
+      return selectedContract;
+    }
+
+    const derivative = DERIVATIVE_CONTRACTS.find(
+      (item: any) => item.symbol === selected
+    );
+
+    if (derivative) return derivative;
+
+    const instrument = INSTRUMENTS.find(
+      (item: any) => item.symbol === selected
+    );
+
+    return instrument ?? null;
+  }, [selected, selectedContract]);
 
   return (
     <div className="min-h-screen bg-ink text-white">
@@ -80,7 +138,8 @@ export function Dashboard(props: DashboardProps) {
         {activeTab === 'markets' && (
           <MarketsView
             selected={selected}
-            onSelect={setSelected}
+            selectedContract={activeContract}
+            onSelect={handleSelectContract}
             livePrices={livePrices}
             basePrice={basePrice}
             livePrice={livePrice}
@@ -102,12 +161,14 @@ export function Dashboard(props: DashboardProps) {
               onDeposit={onDeposit}
               onWithdraw={onWithdraw}
             />
+
             <div className="space-y-6">
               <BalanceSummary
                 balance={walletBalance}
                 positionsCount={positions.length}
                 txCount={transactions.length}
               />
+
               <PositionsPanel
                 positions={positions}
                 livePrices={livePrices}
@@ -120,18 +181,24 @@ export function Dashboard(props: DashboardProps) {
         {activeTab === 'positions' && (
           <div id="positions" className="grid gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2 space-y-6">
-              <CandleChart symbol={selected} basePrice={basePrice} livePrice={livePrice} />
+              <CandleChart
+                symbol={selected}
+                basePrice={basePrice}
+                livePrice={livePrice}
+              />
             </div>
+
             <div className="space-y-6">
               <PositionsPanel
                 positions={positions}
                 livePrices={livePrices}
                 onClose={onClosePosition}
               />
+
               <WatchlistPanel
                 watchlist={watchlist}
                 livePrices={livePrices}
-                onSelect={setSelected}
+                onSelect={handleSelectContract}
                 onRemove={onRemoveWatch}
                 selected={selected}
               />
@@ -149,26 +216,39 @@ export function Dashboard(props: DashboardProps) {
                 <span className="gold-text">TRA</span>
                 <span className="accent-text">DEND</span>
               </div>
+
               <p className="text-xs text-gray-500 leading-relaxed">
-                Zero-brokerage, ultra-secure trading for NSE, BSE &amp; MCX. Built for speed,
-                designed for trust.
+                Zero-brokerage, ultra-secure trading for NSE, BSE &amp; MCX.
+                Built for speed, designed for trust.
               </p>
             </div>
+
             <FooterCol
               title="Platform"
               links={['Markets', 'Wallet', 'Positions', 'Download App']}
             />
+
             <FooterCol
               title="Markets"
               links={['Nifty 50', 'Sensex', 'Gold Futures', 'Bank Nifty']}
             />
+
             <FooterCol
               title="Legal"
-              links={['Privacy Policy', 'Terms of Service', 'Risk Disclosure', 'Sitemap']}
+              links={[
+                'Privacy Policy',
+                'Terms of Service',
+                'Risk Disclosure',
+                'Sitemap'
+              ]}
             />
           </div>
+
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-white/5 pt-5 text-xs text-gray-600">
-            <span>© {new Date().getFullYear()} TRADEND · zerobrokerageapp.in</span>
+            <span>
+              © {new Date().getFullYear()} TRADEND · zerobrokerageapp.in
+            </span>
+
             <span className="flex items-center gap-1.5">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
               All systems operational
@@ -180,15 +260,17 @@ export function Dashboard(props: DashboardProps) {
   );
 }
 
+
 function MarketsView(props: {
   selected: string;
-  onSelect: (s: string) => void;
+  selectedContract: any;
+  onSelect: (contractOrSymbol: any) => void;
   livePrices: Record<string, number>;
   basePrice: number;
   livePrice: number;
-  watchlist: string[];
-  onToggleWatch: (s: string) => void;
-  onRemoveWatch: (s: string) => void;
+  watchlist: any[];
+  onToggleWatch: (contract: any) => void;
+  onRemoveWatch: (contract: any) => void;
   walletBalance: number;
   onOpenPosition: (p: Position) => void;
   positions: Position[];
@@ -196,6 +278,7 @@ function MarketsView(props: {
 }) {
   const {
     selected,
+    selectedContract,
     onSelect,
     livePrices,
     basePrice,
@@ -211,6 +294,7 @@ function MarketsView(props: {
 
   return (
     <div id="markets" className="space-y-6">
+
       <ContractBrowser
         selected={selected}
         onSelect={onSelect}
@@ -219,19 +303,27 @@ function MarketsView(props: {
       />
 
       <div className="grid gap-6 lg:grid-cols-3">
+
         {/* Left + center: chart */}
         <div className="lg:col-span-2 space-y-6">
-          <CandleChart symbol={selected} basePrice={basePrice} livePrice={livePrice} />
+          <CandleChart
+            symbol={selected}
+            basePrice={basePrice}
+            livePrice={livePrice}
+          />
         </div>
 
         {/* Right column: trade + watchlist + positions */}
         <div className="space-y-6">
+
           <TradePanel
             symbol={selected}
+            contract={selectedContract}
             livePrice={livePrice}
             walletBalance={walletBalance}
             onOpenPosition={onOpenPosition}
           />
+
           <WatchlistPanel
             watchlist={watchlist}
             livePrices={livePrices}
@@ -239,16 +331,19 @@ function MarketsView(props: {
             onRemove={onRemoveWatch}
             selected={selected}
           />
+
           <PositionsPanel
             positions={positions}
             livePrices={livePrices}
             onClose={onClosePosition}
           />
+
         </div>
       </div>
     </div>
   );
 }
+
 
 function BalanceSummary({
   balance,
@@ -261,15 +356,33 @@ function BalanceSummary({
 }) {
   return (
     <div className="glass rounded-2xl p-5">
-      <h3 className="font-display text-lg font-bold text-white mb-4">Account Summary</h3>
+      <h3 className="font-display text-lg font-bold text-white mb-4">
+        Account Summary
+      </h3>
+
       <div className="grid grid-cols-3 gap-3">
-        <StatCard label="Balance" value={fmtINR(balance, { compact: true })} tone="accent" />
-        <StatCard label="Positions" value={String(positionsCount)} tone="white" />
-        <StatCard label="Transactions" value={String(txCount)} tone="white" />
+        <StatCard
+          label="Balance"
+          value={fmtINR(balance, { compact: true })}
+          tone="accent"
+        />
+
+        <StatCard
+          label="Positions"
+          value={String(positionsCount)}
+          tone="white"
+        />
+
+        <StatCard
+          label="Transactions"
+          value={String(txCount)}
+          tone="white"
+        />
       </div>
     </div>
   );
 }
+
 
 function StatCard({
   label,
@@ -281,23 +394,46 @@ function StatCard({
   tone: 'accent' | 'white' | 'gold';
 }) {
   const color =
-    tone === 'accent' ? 'text-accent' : tone === 'gold' ? 'text-gold' : 'text-white';
+    tone === 'accent'
+      ? 'text-accent'
+      : tone === 'gold'
+        ? 'text-gold'
+        : 'text-white';
+
   return (
     <div className="rounded-xl border border-white/5 bg-black/40 p-3 text-center">
-      <div className="text-[11px] uppercase tracking-wider text-gray-500">{label}</div>
-      <div className={`mt-1 font-display text-lg font-bold ${color}`}>{value}</div>
+      <div className="text-[11px] uppercase tracking-wider text-gray-500">
+        {label}
+      </div>
+
+      <div className={`mt-1 font-display text-lg font-bold ${color}`}>
+        {value}
+      </div>
     </div>
   );
 }
 
-function FooterCol({ title, links }: { title: string; links: string[] }) {
+
+function FooterCol({
+  title,
+  links
+}: {
+  title: string;
+  links: string[];
+}) {
   return (
     <div>
-      <h4 className="font-semibold text-white text-sm mb-2">{title}</h4>
+      <h4 className="font-semibold text-white text-sm mb-2">
+        {title}
+      </h4>
+
       <ul className="space-y-1.5">
         {links.map((l) => (
           <li key={l}>
-            <a href="#" className="text-xs text-gray-500 hover:text-accent transition-colors">
+            <a
+              href="#"
+              className="text-xs text-gray-500 hover:text-accent transition-colors"
+            >
               {l}
             </a>
           </li>
