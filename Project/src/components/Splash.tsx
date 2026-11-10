@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ShieldCheck, Download, ArrowRight, Lock, Zap, TrendingUp } from 'lucide-react';
 import { APK_URL } from '@/types';
 
@@ -12,15 +12,12 @@ interface SplashProps {
 }
 
 export function Splash({ onEnter }: SplashProps) {
-  const [mounted, setMounted] = useState(false);
-  
+  // Render the primary shell immediately so a delayed timer or throttled mobile
+  // tab cannot leave the root looking blank during the first paint.
+  const [mounted] = useState(true);
+
   // Modal Navigation State: 'none' | 'signin' | 'register' | 'forgot'
   const [activeModal, setActiveModal] = useState<'none' | 'signin' | 'register' | 'forgot'>('none');
-
-  useEffect(() => {
-    const t = setTimeout(() => setMounted(true), 40);
-    return () => clearTimeout(t);
-  }, []);
 
   const closeModal = () => setActiveModal('none');
 
