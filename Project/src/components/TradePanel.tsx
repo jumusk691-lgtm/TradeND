@@ -1,7 +1,16 @@
+TypeScript
+
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { Zap, ArrowUpCircle, ArrowDownCircle, Info } from 'lucide-react';
+import {
+  Zap,
+  ArrowUpCircle,
+  ArrowDownCircle,
+  Info
+} from 'lucide-react';
+
 import { getInstrument } from '@/data/instruments';
 import { fmtINR, fmtNum, uid } from '@/lib/format';
+
 import {
   type OrderSide,
   type OrderType,
@@ -13,204 +22,583 @@ interface TradePanelProps {
   livePrice: number;
   walletBalance: number;
   onOpenPosition: (p: Position) => void;
-  contract?: any; // Rich contract object from DB / Watchlist
+  contract?: any;
 }
 
-const RENDER_WS_URL = "wss://myt-backend-1.onrender.com/ws";
+const RENDER_WS_URL = 'wss://myt-backend-1.onrender.com/ws';
 
-export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, contract }: TradePanelProps) {
+type ProductType = 'INTRADAY' | 'DELIVERY';
+
+export function TradePanel({
+  symbol,
+  livePrice,
+  walletBalance,
+  onOpenPosition,
+  contract
+}: TradePanelProps) {
+
   const staticInst = getInstrument(symbol);
-  
-  // 🌟 Extract metadata strictly from contract or static instrument
-  const exchange = contract?.exchange || contract?.exch_seg || staticInst?.exchange || 'NSE';
-  const name = contract?.name || staticInst?.name || symbol;
-  const lotSize = Number(contract?.lotsize || contract?.lotSize || staticInst?.lotSize || 1);
-  const instrumentKey = contract?.instrumentKey || contract?.token || '';
+
+  // =========================================
+  // CONTRACT METADATA
+  // =========================================
+
+  const exchange = String(
+    contract?.exch_seg ||
+    contract?.exchange ||
+    staticInst?.exchange ||
+    'NSE'
+  );
+
+  const name =
+    contract?.name ||
+    staticInst?.name ||
+    symbol;
+
+  const token = String(contract?.token || '');
+
+  const lotSize = Math.max(
+    1,
+    Number(
+      contract?.lotsize ||
+      contract?.lotSize ||
+      staticInst?.lotSize ||
+      1
+    ) || 1
+  );
+
+  const instrumentKey =
+    contract?.instrumentKey ||
+    (token ? `${exchange}|${token}` : '');
 
   const isMcx = exchange.toUpperCase().includes('MCX');
-  const availableLevs = isMcx ? [10, 50, 100, 200, 300, 400, 500] : [1, 3, 5, 7, 8, 10];
+
+  const availableLevs = isMcx
+    ? [10, 50, 100, 200, 300, 400, 500]
+    : [1, 3, 5, 7, 8, 10];
+
   const defaultLev = isMcx ? 100 : 4;
 
+  // =========================================
+  // STATES
+  // =========================================
+
   const [leverage, setLeverage] = useState<number>(defaultLev);
+
   const [side, setSide] = useState<OrderSide>('BUY');
-  const [orderType, setOrderType] = useState<OrderType>('MARKET');
-  
-  const [currentLtp, setCurrentLtp] = useState<number>(livePrice || 0);
-  const [limitPrice, setLimitPrice] = useState<string>(fmtNum(livePrice || 0));
-  
+
+  const [orderType, setOrderType] =
+    useState<OrderType>('MARKET');
+
+  const [product, setProduct] =
+    useState<ProductType>('INTRADAY');
+
+  const [currentLtp, setCurrentLtp] =
+    useState<number>(livePrice || 0);
+
+  const [limitPrice, setLimitPrice] =
+    useState<string>(fmtNum(livePrice || 0));
+
   const [lots, setLots] = useState<string>('1');
+
   const [error, setError] = useState<string | null>(null);
+
   const [success, setSuccess] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
 
+  const reconnectTimerRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const mountedRef = useRef(true);
+
+  // =========================================
+  // LIVE PRICE SYNC
+  // =========================================
+
   useEffect(() => {
     if (livePrice > 0) {
       setCurrentLtp(livePrice);
+
       if (orderType === 'MARKET') {
         setLimitPrice(fmtNum(livePrice));
       }
     }
   }, [livePrice, orderType]);
 
-  // 🌟 Direct Render WebSocket Subscription & Live LTP Fetching inside TradePanel
+  // =========================================
+  // RESET WHEN CONTRACT CHANGES
+  // =========================================
+
   useEffect(() => {
+    setLeverage(isMcx ? 100 : 4);
+    setLots('1');
+    setSide('BUY');
+    setOrderType('MARKET');
+    setProduct('INTRADAY');
+    setError(null);
+    setSuccess(null);
+
+    if (livePrice > 0) {
+      setCurrentLtp(livePrice);
+      setLimitPrice(fmtNum(livePrice));
+    }
+  }, [symbol, token, exchange]);
+
+  // =========================================
+  // DIRECT WEBSOCKET LIVE LTP
+  // =========================================
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    let shouldReconnect = true;
+
     function connectWS() {
-      const ws = new WebSocket(RENDER_WS_URL);
-      wsRef.current = ws;
+      if (!shouldReconnect) return;
+
+      let ws: WebSocket;
+
+      try {
+        ws = new WebSocket(RENDER_WS_URL);
+        wsRef.current = ws;
+      } catch (error) {
+        console.error('TradePanel WebSocket error:', error);
+
+        reconnectTimerRef.current = setTimeout(
+          connectWS,
+          3000
+        );
+
+        return;
+      }
 
       ws.onopen = () => {
-        const keys = [instrumentKey, symbol, contract?.token].filter(Boolean);
-        const tokens = [contract?.token, instrumentKey].filter(Boolean);
-        
-        ws.send(JSON.stringify({
-          action: "sub",
-          guid: "tradepanel_direct_sub",
-          instrumentKeys: keys,
-          tokens: tokens
-        }));
+        const keys = [
+          instrumentKey,
+          symbol,
+          token
+        ].filter(Boolean);
+
+        const tokens = [
+          token,
+          instrumentKey
+        ].filter(Boolean);
+
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            action: 'sub',
+            guid: 'tradepanel_direct_sub',
+            instrumentKeys: keys,
+            tokens
+          }));
+        }
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          
-          if (data.type === "initial_ltps" && data.data) {
-            const val = data.data[instrumentKey] || data.data[symbol] || data.data[contract?.token];
-            if (val) setCurrentLtp(Number(val));
-          } else {
-            const key = data.instrument_key || data.instrumentKey || data.token || data.symbol || "";
-            const ltpVal = data.ltp || data.price || data.last_price || 0;
-            
-            if (key && ltpVal) {
-              if (key === symbol || key === instrumentKey || key === contract?.token || key.includes(symbol)) {
-                setCurrentLtp(Number(ltpVal));
-              }
+
+          if (data.type === 'initial_ltps' && data.data) {
+            const value =
+              data.data[instrumentKey] ??
+              data.data[symbol] ??
+              data.data[token];
+
+            if (value !== undefined && Number(value) > 0) {
+              setCurrentLtp(Number(value));
             }
+
+            return;
           }
-        } catch (e) {
-          console.error("TradePanel WS parse error:", e);
+
+          const key = String(
+            data.instrument_key ||
+            data.instrumentKey ||
+            data.token ||
+            data.symbol ||
+            ''
+          );
+
+          const ltpValue =
+            data.ltp ??
+            data.price ??
+            data.last_price ??
+            0;
+
+          if (!key || Number(ltpValue) <= 0) return;
+
+          const matches =
+            key === symbol ||
+            key === instrumentKey ||
+            key === token;
+
+          if (matches) {
+            setCurrentLtp(Number(ltpValue));
+          }
+
+        } catch (error) {
+          console.error(
+            'TradePanel WS parse error:',
+            error
+          );
         }
       };
 
+      ws.onerror = (error) => {
+        console.error('TradePanel WebSocket error:', error);
+      };
+
       ws.onclose = () => {
-        setTimeout(connectWS, 3000);
+        if (shouldReconnect) {
+          reconnectTimerRef.current = setTimeout(
+            connectWS,
+            3000
+          );
+        }
       };
     }
 
     connectWS();
+
     return () => {
-      if (wsRef.current) wsRef.current.close();
+      shouldReconnect = false;
+
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+
+      if (wsRef.current) {
+        wsRef.current.onclose = null;
+        wsRef.current.close();
+        wsRef.current = null;
+      }
     };
-  }, [symbol, instrumentKey, contract]);
 
-  useEffect(() => {
-    setLeverage(isMcx ? 100 : 4);
-  }, [exchange, isMcx]);
+  }, [symbol, token, instrumentKey]);
 
-  const effectivePrice = orderType === 'MARKET' ? currentLtp : parseFloat(limitPrice) || currentLtp;
-  
-  // 🌟 Lots * LotSize Calculation
-  const lotsNum = Math.max(1, parseInt(lots, 10) || 1);
-  const totalUnits = lotsNum * lotSize;
+  // =========================================
+  // APK GOLD SCALE FACTOR
+  // =========================================
 
   function getGoldScaleFactor(sym: string): number {
-    const symUpper = sym.toUpperCase();
-    if (symUpper.includes("GOLDM")) return 1.0;
-    if (symUpper.includes("GOLD")) return 1000.0;
-    return 1.0;
+    const upper = sym.toUpperCase();
+
+    if (upper.includes('GOLDM')) return 1;
+
+    if (upper.includes('GOLD')) return 1000;
+
+    return 1;
   }
 
-  const notional = useMemo(() => {
-    const symUpper = symbol.toUpperCase();
-    if (symUpper.includes("GOLD") || symUpper.includes("GOLDM")) {
-      const scaleFactor = getGoldScaleFactor(symbol);
-      return (effectivePrice / 10.0) * totalUnits * scaleFactor;
-    }
-    return effectivePrice * totalUnits;
-  }, [symbol, effectivePrice, totalUnits]);
+  const scaleFactor = getGoldScaleFactor(symbol);
 
-  const margin = notional / leverage;
+  const isGold =
+    symbol.toUpperCase().includes('GOLD');
+
+  // =========================================
+  // APK PRICE OFFSET
+  // =========================================
+
+  function getPriceOffset(sym: string): number {
+    const upper = sym.toUpperCase();
+
+    if (upper.includes('GOLD')) return 5;
+
+    if (
+      upper.includes('NATGAS') ||
+      upper.includes('NATURAL')
+    ) {
+      return 0.1;
+    }
+
+    if (
+      upper.includes('CRUDEOIL') ||
+      upper.includes('CRUDE')
+    ) {
+      return 2;
+    }
+
+    return 1;
+  }
+
+  const priceOffset = getPriceOffset(symbol);
+
+  const adjustedMarketPrice = useMemo(() => {
+    if (currentLtp <= 0) return 0;
+
+    if (side === 'BUY') {
+      return currentLtp + priceOffset;
+    }
+
+    return currentLtp >= priceOffset
+      ? currentLtp - priceOffset
+      : currentLtp;
+
+  }, [currentLtp, side, priceOffset]);
+
+  // =========================================
+  // QUANTITY
+  // =========================================
+
+  const lotsNum = Math.max(
+    1,
+    parseInt(lots, 10) || 1
+  );
+
+  const totalUnits = lotsNum * lotSize;
+
+  // =========================================
+  // EFFECTIVE ORDER PRICE
+  // =========================================
+
+  const effectivePrice =
+    orderType === 'MARKET'
+      ? adjustedMarketPrice
+      : Math.max(0, parseFloat(limitPrice) || 0);
+
+  // =========================================
+  // APK NOTIONAL CALCULATION
+  // =========================================
+
+  const notional = useMemo(() => {
+
+    if (effectivePrice <= 0) return 0;
+
+    if (isGold) {
+      return (
+        (effectivePrice / 10) *
+        totalUnits *
+        scaleFactor
+      );
+    }
+
+    return effectivePrice * totalUnits;
+
+  }, [
+    symbol,
+    effectivePrice,
+    totalUnits,
+    isGold,
+    scaleFactor
+  ]);
+
+  const margin = leverage > 0
+    ? notional / leverage
+    : 0;
+
+  // =========================================
+  // MAX LOTS BY BALANCE
+  // =========================================
 
   const maxLotsByBalance = useMemo(() => {
-    if (!walletBalance || effectivePrice <= 0) return 100;
-    const symUpper = symbol.toUpperCase();
-    let unitCost = effectivePrice;
-    if (symUpper.includes("GOLD") || symUpper.includes("GOLDM")) {
-      unitCost = (effectivePrice / 10.0) * getGoldScaleFactor(symbol);
+
+    if (
+      !walletBalance ||
+      effectivePrice <= 0 ||
+      leverage <= 0
+    ) {
+      return 0;
     }
-    const maxUnits = Math.floor((walletBalance * leverage) / unitCost);
-    return Math.max(1, Math.floor(maxUnits / lotSize));
-  }, [walletBalance, leverage, effectivePrice, lotSize, symbol]);
+
+    let unitCost = effectivePrice;
+
+    if (isGold) {
+      unitCost =
+        (effectivePrice / 10) * scaleFactor;
+    }
+
+    if (unitCost <= 0) return 0;
+
+    const maxUnits = Math.floor(
+      (walletBalance * leverage) / unitCost
+    );
+
+    return Math.floor(maxUnits / lotSize);
+
+  }, [
+    walletBalance,
+    leverage,
+    effectivePrice,
+    lotSize,
+    isGold,
+    scaleFactor
+  ]);
+
+  // =========================================
+  // ORDER SUBMIT
+  // =========================================
 
   function handleSubmit() {
+
     setError(null);
     setSuccess(null);
-    if (lotsNum <= 0) {
+
+    if (!token) {
+      setError(
+        'Contract token missing. Please select the contract again.'
+      );
+      return;
+    }
+
+    if (!currentLtp || currentLtp <= 0) {
+      setError('Live market price is not available.');
+      return;
+    }
+
+    if (!Number.isFinite(lotsNum) || lotsNum <= 0) {
       setError('Enter a valid lots quantity.');
       return;
     }
+
+    if (lotsNum > maxLotsByBalance) {
+      setError(
+        `Maximum available quantity is ${maxLotsByBalance} lots.`
+      );
+      return;
+    }
+
+    if (orderType === 'LIMIT') {
+      const parsedLimit = parseFloat(limitPrice);
+
+      if (!limitPrice || !Number.isFinite(parsedLimit) || parsedLimit <= 0) {
+        setError('Enter a valid limit price.');
+        return;
+      }
+    }
+
     if (margin > walletBalance) {
       setError(
         `Insufficient balance. Margin required ${fmtINR(margin)}, available ${fmtINR(walletBalance)}.`
       );
       return;
     }
-    if (orderType === 'LIMIT' && (!limitPrice || parseFloat(limitPrice) <= 0)) {
-      setError('Enter a valid limit price.');
-      return;
-    }
 
-    const pos: Position = {
+    const positionData = {
       id: uid('pos'),
+
       symbol,
-      name: name,
-      side,
+      name,
+
+      token,
+
+      instrumentKey,
+
+      exchange,
+      exch_seg: contract?.exch_seg || exchange,
+
+      strike: contract?.strike ?? null,
+
+      expiry:
+        contract?.expiry ??
+        contract?.rawExpiry ??
+        null,
+
+      lots: lotsNum,
+
+      lotsize: String(lotSize),
+
       qty: totalUnits,
+
+      side,
+
+      orderType,
+
+      product,
+
       entryPrice: effectivePrice,
-      leverage: `${leverage}x` as any,
+
+      currentPrice: currentLtp,
+
+      leverage: `${leverage}x`,
+
       margin,
-      currentPrice: effectivePrice,
+
+      notional,
+
+      buy_price: effectivePrice,
+
+      margin_blocked: margin,
+
+      scale_factor: scaleFactor,
+
+      status: 'OPEN',
+
+      instrumenttype:
+        contract?.instrumenttype ??
+        contract?.kind ??
+        '',
+
+      tick_size: contract?.tick_size ?? null,
+
+      timestamp: Date.now()
     };
-    onOpenPosition(pos);
+
+    onOpenPosition(positionData as Position);
+
     setSuccess(
-      `${side} ${totalUnits} units (${lotsNum} lots) of ${symbol} @ ${fmtNum(effectivePrice)} (${leverage}x) placed.`
+      `${side} ${totalUnits} units (${lotsNum} lots) of ${symbol} @ ${fmtNum(effectivePrice)} (${leverage}x) ${product} placed.`
     );
-    setTimeout(() => setSuccess(null), 3500);
+
+    setTimeout(() => {
+      setSuccess(null);
+    }, 3500);
   }
 
-  const insufficient = margin > walletBalance;
+  const insufficient =
+    margin > walletBalance ||
+    maxLotsByBalance < lotsNum;
+
+  // =========================================
+  // UI
+  // =========================================
 
   return (
     <div className="glass rounded-2xl p-4 sm:p-5">
+
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-display text-lg font-bold text-white">Trade Order</h3>
+        <h3 className="font-display text-lg font-bold text-white">
+          Trade Order
+        </h3>
+
         <span className="rounded-md bg-accent/10 px-2 py-0.5 text-xs font-semibold text-accent">
           {exchange}
         </span>
       </div>
 
       {/* Symbol + LTP Header */}
+
       <div className="mb-4 rounded-xl border border-white/5 bg-black/40 p-3">
         <div className="flex items-center justify-between">
+
           <div className="min-w-0 pr-2">
-            <div className="text-sm font-semibold text-white truncate">{symbol}</div>
-            <div className="text-[11px] text-gray-400 truncate">{name} {lotSize > 1 ? `(1 Lot = ${lotSize})` : ''}</div>
+            <div className="text-sm font-semibold text-white truncate">
+              {symbol}
+            </div>
+
+            <div className="text-[11px] text-gray-400 truncate">
+              {name} {lotSize > 1 ? `(1 Lot = ${lotSize})` : ''}
+            </div>
           </div>
+
           <div className="text-right shrink-0">
             <div className="font-mono text-base font-semibold text-white">
               {currentLtp > 0 ? fmtNum(currentLtp) : '0.00'}
             </div>
+
             <div className="text-[11px] text-emerald-400 font-mono flex items-center justify-end gap-1">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
               Live LTP
             </div>
           </div>
+
         </div>
       </div>
 
       {/* Side toggle */}
+
       <div className="mb-4 grid grid-cols-2 gap-2">
+
         <button
           type="button"
           onClick={() => setSide('BUY')}
@@ -223,6 +611,7 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
           <ArrowUpCircle className="h-4 w-4" />
           BUY
         </button>
+
         <button
           type="button"
           onClick={() => setSide('SELL')}
@@ -235,10 +624,13 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
           <ArrowDownCircle className="h-4 w-4" />
           SELL
         </button>
+
       </div>
 
       {/* Order type */}
+
       <div className="mb-4 flex items-center gap-1 rounded-lg border border-white/5 bg-black/40 p-1">
+
         {(['MARKET', 'LIMIT'] as OrderType[]).map((t) => (
           <button
             key={t}
@@ -253,28 +645,65 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
             {t}
           </button>
         ))}
+
       </div>
+
+      {/* Product type */}
+
+      <div className="mb-4">
+        <label className="mb-1.5 block text-[11px] uppercase tracking-wider text-gray-500">
+          Product
+        </label>
+
+        <div className="grid grid-cols-2 gap-2">
+
+          {(['INTRADAY', 'DELIVERY'] as ProductType[]).map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setProduct(p)}
+              className={`rounded-lg py-2.5 text-xs font-bold transition-all cursor-pointer ${
+                product === p
+                  ? 'bg-gold text-black gold-glow'
+                  : 'bg-black/40 text-gray-400 border border-white/5 hover:text-white'
+              }`}
+            >
+              {p}
+            </button>
+          ))}
+
+        </div>
+      </div>
+
+      {/* Limit price */}
 
       {orderType === 'LIMIT' && (
         <div className="mb-4">
+
           <label className="mb-1 block text-[11px] uppercase tracking-wider text-gray-500">
             Limit Price
           </label>
+
           <input
             type="number"
+            min="0"
             value={limitPrice}
             onChange={(e) => setLimitPrice(e.target.value)}
             className="w-full rounded-lg border border-white/5 bg-black/40 px-3 py-2 font-mono text-sm text-white focus:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent/30"
           />
+
         </div>
       )}
 
       {/* Quantity & Lots */}
+
       <div className="mb-4 grid grid-cols-2 gap-3">
+
         <div>
           <label className="mb-1 block text-[11px] uppercase tracking-wider text-gray-400 font-medium">
             LOTS
           </label>
+
           <input
             type="number"
             min="1"
@@ -283,32 +712,57 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
             className="w-full rounded-lg border border-white/10 bg-black/60 px-3 py-2.5 font-mono text-base text-white focus:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent/30 text-center font-bold"
           />
         </div>
+
         <div>
           <label className="mb-1 block text-[11px] uppercase tracking-wider text-gold font-medium">
             TOTAL QTY (UNITS)
           </label>
+
           <div className="w-full rounded-lg border border-gold/40 bg-gold/10 px-3 py-2.5 font-mono text-base text-gold text-center font-bold flex items-center justify-center shadow-inner">
             {totalUnits.toLocaleString('en-IN')}
           </div>
         </div>
-      </div>
-      <div className="mb-4 -mt-2 flex items-center justify-between text-[11px]">
-        <span className="text-gray-500">Max Lots: {maxLotsByBalance.toLocaleString('en-IN')}</span>
-        <span className="text-gold font-bold">1 Lot = {lotSize}</span>
+
       </div>
 
-      {/* Leverage Options */}
+      <div className="mb-4 -mt-2 flex items-center justify-between text-[11px]">
+        <span className="text-gray-500">
+          Max Lots: {maxLotsByBalance.toLocaleString('en-IN')}
+        </span>
+
+        <span className="text-gold font-bold">
+          1 Lot = {lotSize}
+        </span>
+      </div>
+
+      {/* Leverage */}
+
       <div className="mb-4">
+
         <div className="mb-1.5 flex items-center justify-between">
+
           <div className="flex items-center gap-1.5">
             <Zap className="h-3.5 w-3.5 text-gold" />
-            <span className="text-[11px] uppercase tracking-wider text-gray-500">Leverage</span>
+
+            <span className="text-[11px] uppercase tracking-wider text-gray-500">
+              Leverage
+            </span>
           </div>
+
           <span className="text-[10px] text-gray-400">
-            {isMcx ? 'MCX Commodity · up to 500X' : 'Equity/FO · up to 10X'}
+            {isMcx
+              ? 'MCX Commodity · up to 500X'
+              : 'Equity/FO · up to 10X'}
           </span>
+
         </div>
-        <div className={`grid gap-1.5 ${availableLevs.length > 6 ? 'grid-cols-4' : 'grid-cols-3'}`}>
+
+        <div className={`grid gap-1.5 ${
+          availableLevs.length > 6
+            ? 'grid-cols-4'
+            : 'grid-cols-3'
+        }`}>
+
           {availableLevs.map((l) => (
             <button
               key={l}
@@ -323,36 +777,77 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
               {l}x
             </button>
           ))}
+
         </div>
       </div>
 
       {/* Summary */}
+
       <div className="mb-4 space-y-1.5 rounded-xl border border-white/5 bg-black/40 p-3 text-xs">
-        <Row label="Total Units / Size" value={`${totalUnits.toLocaleString('en-IN')}`} />
-        <Row label="Notional Value" value={fmtINR(notional)} />
+
+        <Row
+          label="Total Units / Size"
+          value={`${totalUnits.toLocaleString('en-IN')}`}
+        />
+
+        <Row
+          label="LTP"
+          value={fmtINR(currentLtp)}
+        />
+
+        <Row
+          label="Order Price"
+          value={fmtINR(effectivePrice)}
+        />
+
+        <Row
+          label="Price Offset"
+          value={fmtINR(priceOffset)}
+        />
+
+        <Row
+          label="Notional Value"
+          value={fmtINR(notional)}
+        />
+
         <Row
           label={`Margin (${leverage}x)`}
           value={fmtINR(margin)}
           highlight={insufficient ? 'text-rose-400' : 'text-white'}
         />
-        <Row label="Available Balance" value={fmtINR(walletBalance)} />
+
+        <Row
+          label="Available Balance"
+          value={fmtINR(walletBalance)}
+        />
+
       </div>
+
+      {/* Messages */}
 
       {error && (
         <div className="mb-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
           {error}
         </div>
       )}
+
       {success && (
         <div className="mb-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
           {success}
         </div>
       )}
 
+      {/* Submit */}
+
       <button
         type="button"
         onClick={handleSubmit}
-        disabled={insufficient || lotsNum <= 0}
+        disabled={
+          insufficient ||
+          lotsNum <= 0 ||
+          currentLtp <= 0 ||
+          !token
+        }
         className={`w-full rounded-xl py-3.5 text-sm font-bold transition-all cursor-pointer ${
           side === 'BUY'
             ? 'bg-emerald-500 text-white hover:bg-emerald-400 disabled:opacity-40 shadow-lg shadow-emerald-500/20'
@@ -364,13 +859,16 @@ export function TradePanel({ symbol, livePrice, walletBalance, onOpenPosition, c
 
       <div className="mt-3 flex items-start gap-1.5 text-[10px] text-gray-500">
         <Info className="mt-0.5 h-3 w-3 shrink-0" />
+
         <span>
-          Simulated trading environment. Paper trading position will be opened.
+          Simulated trading environment. Order is submitted to the website position handler.
         </span>
       </div>
+
     </div>
   );
 }
+
 
 function Row({
   label,
@@ -383,8 +881,13 @@ function Row({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-gray-500">{label}</span>
-      <span className={`font-mono ${highlight}`}>{value}</span>
+      <span className="text-gray-500">
+        {label}
+      </span>
+
+      <span className={`font-mono ${highlight}`}>
+        {value}
+      </span>
     </div>
   );
 }
