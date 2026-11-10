@@ -1,6 +1,7 @@
 
 import { Star, X, Inbox, BarChart2 } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+
 import { fmtNum } from '@/lib/format';
 import { db } from '@/lib/firebase';
 import { onValue, ref } from 'firebase/database';
@@ -9,157 +10,274 @@ const DEFAULT_WS_URL = 'wss://myt-backend-ghpx.onrender.com/ws';
 
 interface WatchlistPanelProps {
   watchlist: any[];
-  onSelect: (symbol: string) => void;
+  onSelect: (contract: any) => void;
   onRemove: (symbol: string) => void;
   onOpenChart?: (contract: any) => void;
   selected: string;
 }
 
+interface PriceState {
+  live: Record<string, number>;
+  previous: Record<string, number>;
+}
+
+const normalizeToken = (token: string) =>
+  token.replace(/:/g, '|').trim();
+
+const getPrice = (data: any): number => {
+  const value =
+    data?.ltp ??
+    data?.price ??
+    data?.last_price ??
+    data?.cp ??
+    data?.close ??
+    data;
+
+  const price = Number(value);
+
+  return Number.isFinite(price) && price > 0 ? price : 0;
+};
+
 export function WatchlistPanel({
-  watchlist,
+  watchlist = [],
   onSelect,
   onRemove,
   onOpenChart,
   selected,
 }: WatchlistPanelProps) {
-  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
-  const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
+
+  const [priceState, setPriceState] = useState<PriceState>({
+    live: {},
+    previous: {},
+  });
+
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
+  const [connected, setConnected] = useState(false);
+
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Read the same WebSocket URL configured in Firebase for the APK.
+  // Read WebSocket URL from Firebase.
   useEffect(() => {
     const urlRef = ref(db, 'settings/ws_url');
 
-    const unsubscribe = onValue(urlRef, snapshot => {
-      const value = snapshot.val();
-      if (typeof value === 'string' && value.trim()) {
-        setWsUrl(value.trim());
+    const unsubscribe = onValue(
+      urlRef,
+      snapshot => {
+        const value = snapshot.val();
+
+        if (
+          typeof value === 'string' &&
+          value.trim() &&
+          value.startsWith('wss://')
+        ) {
+          setWsUrl(value.trim());
+        }
+      },
+      error => {
+        console.error('Firebase WS URL error:', error);
       }
-    });
+    );
 
     return () => unsubscribe();
   }, []);
 
-  // Only subscribe to this user's personal watchlist tokens.
-  const watchlistKey = JSON.stringify(
-    watchlist.map(item => ({
-      token: item.token || item.instrumentKey || '',
-      symbol: item.symbol || '',
-    }))
-  );
+  // Create stable watchlist subscription.
+  const watchlistKey = useMemo(() => {
+    return JSON.stringify(
+      watchlist.map(item => ({
+        token: String(
+          item.token ||
+          item.instrumentKey ||
+          ''
+        ).trim(),
 
+        symbol: String(item.symbol || '').trim(),
+      }))
+    );
+  }, [watchlist]);
+
+  // Connect WebSocket and subscribe to watchlist.
   useEffect(() => {
-    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    if (!wsUrl) return;
+
     let stopped = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let currentWs: WebSocket | null = null;
+
+    let reconnectDelay = 3000;
 
     const items = JSON.parse(watchlistKey);
+
     const tokens = Array.from(
       new Set<string>([
         'NSE_INDEX|Nifty 50',
         'BSE_INDEX|SENSEX',
-        ...items.map((item: any) => item.token).filter(Boolean),
+        ...items
+          .map((item: any) => item.token)
+          .filter((token: string) => Boolean(token)),
       ])
     );
 
     const connectWS = () => {
-      if (stopped || !wsUrl) return;
-
-      let ws: WebSocket;
+      if (stopped) return;
 
       try {
-        ws = new WebSocket(wsUrl);
+        const ws = new WebSocket(wsUrl);
+
+        currentWs = ws;
         wsRef.current = ws;
-      } catch (error) {
-        console.error('WebSocket connection error:', error);
-        reconnectTimer = setTimeout(connectWS, 5000);
-        return;
-      }
 
-      ws.onopen = () => {
-        console.log('Connected to MYT Live WebSocket');
-
-        if (tokens.length > 0 && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            action: 'sub',
-            guid: 'upstox_sub_request',
-            instrumentKeys: tokens,
-            tokens,
-          }));
-        }
-      };
-
-      ws.onmessage = event => {
-        try {
-          const data = JSON.parse(event.data);
-
-          if (data.type === 'initial_ltps' && data.data) {
-            const prices: Record<string, number> = {};
-
-            Object.keys(data.data).forEach(key => {
-              prices[key] = Number(data.data[key]) || 0;
-            });
-
-            setLivePrices(previous => ({ ...previous, ...prices }));
+        ws.onopen = () => {
+          if (stopped) {
+            ws.close();
             return;
           }
 
-          const tokenKey =
-            data.instrument_key ||
-            data.instrumentKey ||
-            data.token ||
-            data.t ||
-            data.symbol ||
-            '';
+          console.log('MYT WebSocket Connected');
 
-          const priceValue =
-            data.ltp ??
-            data.price ??
-            data.last_price ??
-            data.cp ??
-            data.close;
+          setConnected(true);
+          reconnectDelay = 3000;
 
-          if (!tokenKey || priceValue == null) return;
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(
+              JSON.stringify({
+                action: 'sub',
+                guid: 'upstox_sub_request',
+                instrumentKeys: tokens,
+                tokens,
+              })
+            );
+          }
+        };
 
-          const price = Number(priceValue);
-          if (!Number.isFinite(price) || price <= 0) return;
+        ws.onmessage = event => {
+          if (stopped) return;
 
-          const alternateKey = tokenKey.replace(':', '|');
+          try {
+            const data = JSON.parse(event.data);
 
-          setLivePrices(previous => {
-            const oldPrice =
-              previous[tokenKey] ??
-              previous[alternateKey] ??
-              price;
+            // Initial prices received from backend.
+            if (
+              data.type === 'initial_ltps' &&
+              data.data &&
+              typeof data.data === 'object'
+            ) {
+              const incoming: Record<string, number> = {};
 
-            setPrevPrices(old => ({
-              ...old,
-              [tokenKey]: oldPrice,
-              [alternateKey]: oldPrice,
-              ...(data.symbol ? { [data.symbol]: oldPrice } : {}),
-            }));
+              Object.entries(data.data).forEach(([key, value]) => {
+                const price = getPrice(value);
 
-            return {
-              ...previous,
-              [tokenKey]: price,
-              [alternateKey]: price,
-              ...(data.symbol ? { [data.symbol]: price } : {}),
-            };
-          });
-        } catch (error) {
-          console.error('WebSocket parsing error:', error);
-        }
-      };
+                if (price > 0) {
+                  incoming[key] = price;
+                  incoming[normalizeToken(key)] = price;
+                }
+              });
 
-      ws.onerror = error => {
-        console.error('MYT WebSocket error:', error);
-      };
+              setPriceState(previous => {
+                const live = { ...previous.live };
+                const old = { ...previous.previous };
 
-      ws.onclose = () => {
+                Object.entries(incoming).forEach(([key, price]) => {
+                  if (live[key] !== undefined) {
+                    old[key] = live[key];
+                  } else {
+                    old[key] = price;
+                  }
+
+                  live[key] = price;
+                });
+
+                return {
+                  live,
+                  previous: old,
+                };
+              });
+
+              return;
+            }
+
+            // Normal live price updates.
+            const tokenKey = String(
+              data.instrument_key ||
+              data.instrumentKey ||
+              data.token ||
+              data.t ||
+              data.symbol ||
+              ''
+            ).trim();
+
+            const price = getPrice(data);
+
+            if (!tokenKey || price <= 0) return;
+
+            const alternateKey = normalizeToken(tokenKey);
+
+            const keys = Array.from(
+              new Set([
+                tokenKey,
+                alternateKey,
+                ...(data.symbol ? [String(data.symbol)] : []),
+              ])
+            );
+
+            setPriceState(previous => {
+              const live = { ...previous.live };
+              const old = { ...previous.previous };
+
+              const oldPrice =
+                live[tokenKey] ??
+                live[alternateKey] ??
+                live[data.symbol] ??
+                price;
+
+              keys.forEach(key => {
+                old[key] = oldPrice;
+                live[key] = price;
+              });
+
+              return {
+                live,
+                previous: old,
+              };
+            });
+
+          } catch (error) {
+            console.error('WebSocket message error:', error);
+          }
+        };
+
+        ws.onerror = error => {
+          console.error('MYT WebSocket error:', error);
+        };
+
+        ws.onclose = () => {
+          if (currentWs === ws) {
+            currentWs = null;
+            wsRef.current = null;
+          }
+
+          setConnected(false);
+
+          if (!stopped) {
+            reconnectTimer = setTimeout(
+              connectWS,
+              reconnectDelay
+            );
+
+            reconnectDelay = Math.min(
+              reconnectDelay * 2,
+              15000
+            );
+          }
+        };
+
+      } catch (error) {
+        console.error('WebSocket connection failed:', error);
+
         if (!stopped) {
-          reconnectTimer = setTimeout(connectWS, 3000);
+          reconnectTimer = setTimeout(connectWS, reconnectDelay);
         }
-      };
+      }
     };
 
     connectWS();
@@ -171,75 +289,135 @@ export function WatchlistPanel({
         clearTimeout(reconnectTimer);
       }
 
+      if (currentWs) {
+        currentWs.onopen = null;
+        currentWs.onmessage = null;
+        currentWs.onerror = null;
+        currentWs.onclose = null;
+
+        currentWs.close(1000, 'Watchlist updated');
+
+        currentWs = null;
+      }
+
       if (wsRef.current) {
-        wsRef.current.onclose = null;
-        wsRef.current.close(1000, 'Watchlist updated or component closed');
         wsRef.current = null;
       }
+
+      setConnected(false);
     };
+
   }, [wsUrl, watchlistKey]);
 
   return (
     <div className="glass rounded-2xl p-4 sm:p-5">
+
+      {/* Header */}
       <div className="flex items-center justify-between mb-3">
+
         <h3 className="font-display text-lg font-bold text-white flex items-center gap-2">
+
           <Star className="h-5 w-5 text-gold fill-gold" />
+
           Watchlist &amp; Live LTP Checker
+
           <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs font-medium text-gray-400">
             {watchlist.length}
           </span>
+
         </h3>
+
+        <span className={`flex items-center gap-1.5 text-[10px] ${
+          connected ? 'text-emerald-400' : 'text-rose-400'
+        }`}>
+
+          <span className={`h-2 w-2 rounded-full ${
+            connected ? 'bg-emerald-400' : 'bg-rose-400'
+          } animate-pulse`} />
+
+          {connected ? 'CONNECTED' : 'CONNECTING'}
+
+        </span>
+
       </div>
 
+      {/* Empty Watchlist */}
       {watchlist.length === 0 ? (
+
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-white/10 px-4 py-8 text-center">
+
           <Inbox className="h-7 w-7 text-gray-700 mb-2" />
+
           <p className="text-sm text-gray-500">
             Your watchlist is empty.
           </p>
+
           <p className="text-xs text-gray-600 mt-1">
             Tap the Star icon in the contract browser to add instruments here.
           </p>
+
         </div>
+
       ) : (
+
+        /* Watchlist Items */
         <div className="space-y-1.5 max-h-[350px] overflow-y-auto scrollbar-thin">
-          {watchlist.map(item => {
-            const sym = item.symbol || '';
+
+          {watchlist.map((item, index) => {
+
+            const sym = String(item.symbol || '');
+
             const name = item.name || sym;
-            const exchange = item.exchange || item.exch_seg || 'NSE';
-            const tokenKey = item.token || item.instrumentKey || '';
-            const altTokenKey = tokenKey.replace(':', '|');
+
+            const exchange =
+              item.exchange ||
+              item.exch_seg ||
+              'NSE';
+
+            const tokenKey = String(
+              item.token ||
+              item.instrumentKey ||
+              ''
+            );
+
+            const altTokenKey = normalizeToken(tokenKey);
 
             const priceValue =
-              livePrices[tokenKey] ??
-              livePrices[altTokenKey] ??
-              livePrices[sym] ??
+              priceState.live[tokenKey] ??
+              priceState.live[altTokenKey] ??
+              priceState.live[sym] ??
               item.price ??
               0;
 
             const price = Number(priceValue) || 0;
 
             const oldPrice =
-              prevPrices[tokenKey] ??
-              prevPrices[altTokenKey] ??
-              prevPrices[sym] ??
+              priceState.previous[tokenKey] ??
+              priceState.previous[altTokenKey] ??
+              priceState.previous[sym] ??
               price;
 
             const isGreen = price >= oldPrice;
+
             const isSelected = selected === sym;
 
             return (
+
               <div
-                key={tokenKey || sym}
-                onClick={() => onSelect(sym)}
+                key={tokenKey || sym || index}
+                onClick={() => onSelect(item)}
                 className={`group flex items-center justify-between rounded-xl border p-3 transition-colors cursor-pointer ${
                   isSelected
                     ? 'border-accent/40 bg-accent/20'
                     : 'border-white/10 bg-black/40 hover:border-white/20'
                 }`}
               >
+
+                {/* Instrument Details */}
                 <div className="min-w-0 flex-1">
+
                   <div className="flex items-center gap-2">
+
                     <span className="text-[15px] font-bold text-white tracking-wide truncate">
                       {name}
                     </span>
@@ -249,9 +427,11 @@ export function WatchlistPanel({
                         {item.kind}
                       </span>
                     )}
+
                   </div>
 
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-300">
+
                     <span className="text-gold font-semibold">
                       {exchange}
                     </span>
@@ -274,16 +454,21 @@ export function WatchlistPanel({
                       </>
                     )}
 
-                    {tokenKey && (
-                      <span className="text-[10px] text-gray-500 font-mono">
-                        (Token: {tokenKey})
-                      </span>
-                    )}
                   </div>
+
+                  {tokenKey && (
+                    <div className="mt-1 text-[10px] text-gray-500 font-mono">
+                      Token: {tokenKey}
+                    </div>
+                  )}
+
                 </div>
 
+                {/* Price and Actions */}
                 <div className="flex items-center gap-3">
+
                   <div className="text-right">
+
                     <div className={`font-mono text-sm font-bold ${
                       isGreen ? 'text-emerald-400' : 'text-rose-400'
                     }`}>
@@ -291,18 +476,26 @@ export function WatchlistPanel({
                     </div>
 
                     <div className="font-mono text-[10px] text-gray-400 flex items-center justify-end gap-1">
+
                       <span className={`h-1.5 w-1.5 rounded-full ${
-                        isGreen ? 'bg-emerald-400' : 'bg-rose-400'
+                        connected
+                          ? 'bg-emerald-400'
+                          : 'bg-gray-500'
                       } animate-pulse`} />
-                      Live LTP
+
+                      {connected ? 'Live LTP' : 'Waiting'}
+
                     </div>
+
                   </div>
 
+                  {/* Open Chart */}
                   <button
                     type="button"
                     onClick={event => {
                       event.stopPropagation();
-                      onSelect(sym);
+
+                      onSelect(item);
                       onOpenChart?.(item);
                     }}
                     className="p-1.5 rounded-lg border border-white/10 bg-black/50 text-accent hover:bg-accent/20 transition-colors cursor-pointer"
@@ -311,6 +504,7 @@ export function WatchlistPanel({
                     <BarChart2 className="h-4 w-4" />
                   </button>
 
+                  {/* Remove */}
                   <button
                     type="button"
                     onClick={event => {
@@ -322,12 +516,18 @@ export function WatchlistPanel({
                   >
                     <X className="h-4 w-4" />
                   </button>
+
                 </div>
+
               </div>
+
             );
           })}
+
         </div>
+
       )}
+
     </div>
   );
 }
