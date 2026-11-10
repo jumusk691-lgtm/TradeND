@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { Mail, Lock, X } from 'lucide-react';
 import { ref, get, query, orderByChild, equalTo } from 'firebase/database';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { db, auth } from '@/lib/firebase'; // Ensure your firebase auth & db are exported correctly
+import { db } from '@/lib/firebase';
 
 interface SignInModalProps {
   isOpen: boolean;
@@ -19,7 +18,7 @@ export function SignInModal({
   onOpenForgot,
   onSuccess,
 }: SignInModalProps) {
-  const [identifier, setIdentifier] = useState(''); // Can be Email or Mobile
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,8 +45,10 @@ export function SignInModal({
 
     try {
       let targetEmail = cleanInput;
+      let userData: any = null;
+      let emailKey = '';
 
-      // 🔍 EXACT ANDROID LOGIC: If input is NOT an email, treat it as mobile and find email from RTDB
+      // 1. If input is mobile number, find the email from users_details
       if (!cleanInput.includes('@')) {
         const usersRef = ref(db, 'users_details');
         const mobileQuery = query(usersRef, orderByChild('mobile'), equalTo(cleanInput));
@@ -59,44 +60,48 @@ export function SignInModal({
           return;
         }
 
-        // Extract email associated with this mobile number
-        let foundEmail = '';
         snapshot.forEach((childSnapshot) => {
-          const userData = childSnapshot.val();
+          userData = childSnapshot.val();
           if (userData && userData.email) {
-            foundEmail = userData.email;
+            targetEmail = userData.email;
           }
         });
-
-        if (!foundEmail) {
-          setError('Associated email not found for this mobile number.');
-          setLoading(false);
-          return;
-        }
-        targetEmail = foundEmail;
       }
 
-      // 🔐 FIREBASE AUTH SIGN IN (Same as Android performFirebaseLogin)
-      const userCredential = await signInWithEmailAndPassword(auth, targetEmail, cleanPass);
-      const user = userCredential.user;
+      // Format email key for Firebase node lookup (dots replaced by commas)
+      emailKey = targetEmail.toLowerCase().replace(/\./g, ',');
+      const userRef = ref(db, `users_details/${emailKey}`);
+      const userSnap = await get(userRef);
 
-      if (user) {
-        const emailKey = targetEmail.toLowerCase().replace(/\./g, ',');
-        
-        // Save session tokens securely in localStorage (matching web state)
-        localStorage.setItem('tradend:uid', emailKey);
-        localStorage.setItem('tradend:email', targetEmail);
-        localStorage.setItem('tradend:auth_uid', user.uid);
-
-        // Reset form & trigger dashboard entry
-        setIdentifier('');
-        setPassword('');
-        setError(null);
-        onSuccess();
+      if (!userSnap.exists()) {
+        setError('Account not found in database.');
+        setLoading(false);
+        return;
       }
+
+      userData = userSnap.val();
+
+      // 2. Strict Password Validation
+      if (!userData.password || String(userData.password) !== cleanPass) {
+        setError('Incorrect password. Please try again.');
+        setLoading(false);
+        return;
+      }
+
+      // 3. Save session tokens securely on successful match
+      localStorage.setItem('tradend:uid', emailKey);
+      localStorage.setItem('tradend:email', targetEmail);
+      if (userData.name) {
+        localStorage.setItem('tradend:name', userData.name);
+      }
+
+      setIdentifier('');
+      setPassword('');
+      setError(null);
+      onSuccess();
     } catch (err: any) {
       console.error('Sign In Error:', err);
-      setError(err.message || 'Invalid credentials or connection failed.');
+      setError('Connection error. Failed to verify credentials.');
     } finally {
       setLoading(false);
     }
@@ -133,7 +138,7 @@ export function SignInModal({
               <input
                 type="text"
                 required
-                placeholder="name@example.com or 10-digit mobile"
+                placeholder="name@example.com or mobile"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 className="w-full rounded-xl border border-white/10 bg-black/60 pl-9 pr-4 py-2.5 text-sm text-white focus:border-accent focus:outline-none"
@@ -169,7 +174,7 @@ export function SignInModal({
             disabled={loading}
             className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-900/40 transition-all disabled:opacity-50 cursor-pointer"
           >
-            {loading ? 'Authenticating...' : 'Sign In'}
+            {loading ? 'Verifying...' : 'Sign In'}
           </button>
 
           <div className="flex items-center justify-between pt-2 text-xs">
