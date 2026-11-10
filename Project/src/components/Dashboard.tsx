@@ -1,5 +1,3 @@
-TypeScript
-
 import { useMemo, useState, useCallback } from 'react';
 import { INSTRUMENTS, getInstrument } from '@/data/instruments';
 import { DERIVATIVE_CONTRACTS } from '@/data/derivatives';
