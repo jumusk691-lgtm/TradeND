@@ -1,8 +1,9 @@
 
 import { useState } from 'react';
 import { User, Mail, Lock, X } from 'lucide-react';
-import { ref, get, set } from 'firebase/database';
-import { db } from '@/lib/firebase';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { ref, set } from 'firebase/database';
+import { auth, db } from '@/lib/firebase';
 
 interface RegisterModalProps {
   isOpen: boolean;
@@ -47,35 +48,32 @@ export function RegisterModal({
 
     setLoading(true);
     try {
-      const emailKey = cleanEmail.replace(/\./g, ',');
-      const userRef = ref(db, `users_details/${emailKey}`);
-      const snapshot = await get(userRef);
-
-      if (snapshot.exists()) {
-        setError('Account already exists with this email. Please Sign In.');
-        setLoading(false);
-        return;
-      }
-
+      const credential = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPass);
+      const uid = credential.user.uid;
+      const userRef = ref(db, `users_details/${uid}`);
       const newUser = {
         name: name.trim(),
         email: cleanEmail,
-        password: cleanPass,
         funds: { balance: 50000 },
         createdAt: new Date().toISOString(),
       };
 
       await set(userRef, newUser);
 
-      // Save user session isolation token
-      localStorage.setItem('tradend:uid', emailKey);
+      localStorage.setItem('tradend:uid', uid);
       localStorage.setItem('tradend:email', cleanEmail);
       localStorage.setItem('tradend:name', name.trim());
 
       onSuccess();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Registration Error:', err);
-      setError('Failed to create account. Please try again.');
+      if (err?.code === 'auth/email-already-in-use') {
+        setError('An account already exists with this email. Please sign in.');
+      } else if (err?.code === 'auth/weak-password') {
+        setError('Password must be at least 6 characters long.');
+      } else {
+        setError('Failed to create account. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

@@ -15,7 +15,7 @@ import { Navbar } from '@/components/Navbar';
 import { useLivePrices } from '@/hooks/useLivePrices';
 import { fmtINR } from '@/lib/format';
 
-import type { DashboardTab, Position, WalletTx } from '@/types';
+import type { DashboardTab, Position, TradeHistoryEntry, WalletTx } from '@/types';
 
 interface DashboardProps {
   activeTab: DashboardTab;
@@ -23,11 +23,13 @@ interface DashboardProps {
   walletBalance: number;
   watchlist: any[];
   positions: Position[];
+  tradeHistory: TradeHistoryEntry[];
   transactions: WalletTx[];
   onToggleWatch: (contract: any) => void;
   onRemoveWatch: (contract: any) => void;
-  onOpenPosition: (p: Position) => void;
-  onClosePosition: (id: string) => void;
+  onOpenPosition: (p: Position) => Promise<void>;
+  onClosePosition: (id: string, exitPrice: number) => Promise<void>;
+  onCloseAllPositions: (closePrices: Record<string, number>) => Promise<void>;
   onDeposit: (amount: number, method: string) => void;
   onWithdraw: (amount: number, method: string) => void;
   onBackToSplash: () => void;
@@ -43,11 +45,13 @@ export function Dashboard(props: DashboardProps) {
     walletBalance,
     watchlist,
     positions,
+    tradeHistory,
     transactions,
     onToggleWatch,
     onRemoveWatch,
     onOpenPosition,
     onClosePosition,
+    onCloseAllPositions,
     onDeposit,
     onWithdraw,
     onBackToSplash,
@@ -172,7 +176,9 @@ export function Dashboard(props: DashboardProps) {
             walletBalance={walletBalance}
             onOpenPosition={onOpenPosition}
             positions={positions}
+            tradeHistory={tradeHistory}
             onClosePosition={onClosePosition}
+            onCloseAllPositions={onCloseAllPositions}
           />
         )}
 
@@ -196,8 +202,10 @@ export function Dashboard(props: DashboardProps) {
 
               <PositionsPanel
                 positions={positions}
+                history={tradeHistory}
                 livePrices={livePrices}
                 onClose={onClosePosition}
+                onCloseAll={onCloseAllPositions}
               />
 
             </div>
@@ -219,13 +227,14 @@ export function Dashboard(props: DashboardProps) {
 
               <PositionsPanel
                 positions={positions}
+                history={tradeHistory}
                 livePrices={livePrices}
                 onClose={onClosePosition}
+                onCloseAll={onCloseAllPositions}
               />
 
               <WatchlistPanel
                 watchlist={watchlist}
-                livePrices={livePrices}
                 onSelect={handleSelectContract}
                 onRemove={onRemoveWatch}
                 selected={selected}
@@ -305,9 +314,11 @@ function MarketsView(props: {
   onToggleWatch: (contract: any) => void;
   onRemoveWatch: (contract: any) => void;
   walletBalance: number;
-  onOpenPosition: (p: Position) => void;
+  onOpenPosition: (p: Position) => Promise<void>;
   positions: Position[];
-  onClosePosition: (id: string) => void;
+  tradeHistory: TradeHistoryEntry[];
+  onClosePosition: (id: string, exitPrice: number) => Promise<void>;
+  onCloseAllPositions: (closePrices: Record<string, number>) => Promise<void>;
 }) {
   const {
     selected,
@@ -322,7 +333,9 @@ function MarketsView(props: {
     walletBalance,
     onOpenPosition,
     positions,
+    tradeHistory,
     onClosePosition,
+    onCloseAllPositions,
   } = props;
 
   return (
@@ -357,7 +370,6 @@ function MarketsView(props: {
 
           <WatchlistPanel
             watchlist={watchlist}
-            livePrices={livePrices}
             onSelect={onSelect}
             onRemove={onRemoveWatch}
             selected={selected}
@@ -365,8 +377,10 @@ function MarketsView(props: {
 
           <PositionsPanel
             positions={positions}
+            history={tradeHistory}
             livePrices={livePrices}
             onClose={onClosePosition}
+            onCloseAll={onCloseAllPositions}
           />
 
         </div>

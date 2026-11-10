@@ -15,6 +15,7 @@ export interface MarketInstrument {
   open: number;
   prevClose: number;
   volume: string;
+  lotSize?: number;
 }
 
 export type DerivativeKind = 'FUT' | 'CE' | 'PE' | 'INDEX';
@@ -69,6 +70,29 @@ export interface Position {
   leverage: Leverage;
   margin: number;
   currentPrice: number;
+  contractMultiplier?: number;
+  openedAt?: number;
+  exchange?: string;
+  product?: 'INTRADAY' | 'DELIVERY';
+  orderType?: OrderType;
+}
+
+export interface TradeHistoryEntry {
+  id: string;
+  symbol: string;
+  name: string;
+  side: OrderSide;
+  qty: number;
+  buyPrice: number;
+  sellPrice: number;
+  entryPrice: number;
+  exitPrice: number;
+  margin: number;
+  realizedPnl: number;
+  closedAt: number;
+  openedAt: number;
+  leverage: string;
+  contractMultiplier?: number;
 }
 
 // 🌟 Updated WatchlistItem to support token, lotsize, exchange, etc.

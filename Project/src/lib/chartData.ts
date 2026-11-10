@@ -21,14 +21,14 @@ function hashStr(s: string): number {
 }
 
 const CANDLE_COUNT: Record<Timeframe, number> = {
-  '1M': 60,
-  '3M': 60,
-  '5M': 50,
-  '15M': 48,
-  '30M': 40,
-  '1H': 48,
-  '1D': 60,
-  '1W': 52,
+  '1M': 500,
+  '3M': 500,
+  '5M': 500,
+  '15M': 500,
+  '30M': 500,
+  '1H': 500,
+  '1D': 500,
+  '1W': 500,
 };
 
 const STEP_VOL: Record<Timeframe, number> = {
