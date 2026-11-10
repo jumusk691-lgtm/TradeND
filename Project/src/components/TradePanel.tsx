@@ -1,5 +1,3 @@
-TypeScript
-
 import { useEffect, useMemo, useState, useRef } from 'react';
 import {
   Zap,
@@ -10,6 +8,7 @@ import {
 
 import { getInstrument } from '@/data/instruments';
 import { fmtINR, fmtNum, uid } from '@/lib/format';
+import { calculateMargin, calculateNotional } from '@/lib/tradingMath';
 
 import {
   type OrderSide,
@@ -21,7 +20,7 @@ interface TradePanelProps {
   symbol: string;
   livePrice: number;
   walletBalance: number;
-  onOpenPosition: (p: Position) => void;
+  onOpenPosition: (p: Position) => Promise<void>;
   contract?: any;
 }
 
@@ -74,10 +73,10 @@ export function TradePanel({
   const isMcx = exchange.toUpperCase().includes('MCX');
 
   const availableLevs = isMcx
-    ? [10, 50, 100, 200, 300, 400, 500]
-    : [1, 3, 5, 7, 8, 10];
+    ? [10, 25, 50, 100, 200, 300, 400, 500]
+    : [1, 2, 3, 5, 7, 10];
 
-  const defaultLev = isMcx ? 100 : 4;
+  const defaultLev = isMcx ? 100 : 5;
 
   // =========================================
   // STATES
@@ -104,6 +103,11 @@ export function TradePanel({
   const [error, setError] = useState<string | null>(null);
 
   const [success, setSuccess] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    setLeverage(defaultLev);
+  }, [defaultLev]);
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -131,7 +135,7 @@ export function TradePanel({
   // =========================================
 
   useEffect(() => {
-    setLeverage(isMcx ? 100 : 4);
+    setLeverage(defaultLev);
     setLots('1');
     setSide('BUY');
     setOrderType('MARKET');
@@ -143,7 +147,7 @@ export function TradePanel({
       setCurrentLtp(livePrice);
       setLimitPrice(fmtNum(livePrice));
     }
-  }, [symbol, token, exchange]);
+  }, [symbol, token, exchange, defaultLev]);
 
   // =========================================
   // DIRECT WEBSOCKET LIVE LTP
@@ -358,34 +362,15 @@ export function TradePanel({
       : Math.max(0, parseFloat(limitPrice) || 0);
 
   // =========================================
-  // APK NOTIONAL CALCULATION
+  // SHARED POSITION NOTIONAL AND MARGIN
   // =========================================
 
-  const notional = useMemo(() => {
+  const notional = useMemo(
+    () => calculateNotional(symbol, effectivePrice, totalUnits),
+    [symbol, effectivePrice, totalUnits]
+  );
 
-    if (effectivePrice <= 0) return 0;
-
-    if (isGold) {
-      return (
-        (effectivePrice / 10) *
-        totalUnits *
-        scaleFactor
-      );
-    }
-
-    return effectivePrice * totalUnits;
-
-  }, [
-    symbol,
-    effectivePrice,
-    totalUnits,
-    isGold,
-    scaleFactor
-  ]);
-
-  const margin = leverage > 0
-    ? notional / leverage
-    : 0;
+  const margin = calculateMargin(notional, leverage);
 
   // =========================================
   // MAX LOTS BY BALANCE
@@ -429,15 +414,12 @@ export function TradePanel({
   // ORDER SUBMIT
   // =========================================
 
-  function handleSubmit() {
-
+  async function handleSubmit() {
     setError(null);
     setSuccess(null);
 
     if (!token) {
-      setError(
-        'Contract token missing. Please select the contract again.'
-      );
+      setError('Contract token missing. Please select the contract again.');
       return;
     }
 
@@ -452,15 +434,12 @@ export function TradePanel({
     }
 
     if (lotsNum > maxLotsByBalance) {
-      setError(
-        `Maximum available quantity is ${maxLotsByBalance} lots.`
-      );
+      setError(`Maximum available quantity is ${maxLotsByBalance} lots.`);
       return;
     }
 
     if (orderType === 'LIMIT') {
       const parsedLimit = parseFloat(limitPrice);
-
       if (!limitPrice || !Number.isFinite(parsedLimit) || parsedLimit <= 0) {
         setError('Enter a valid limit price.');
         return;
@@ -468,81 +447,50 @@ export function TradePanel({
     }
 
     if (margin > walletBalance) {
-      setError(
-        `Insufficient balance. Margin required ${fmtINR(margin)}, available ${fmtINR(walletBalance)}.`
-      );
+      setError(`Insufficient balance. Margin required ${fmtINR(margin)}, available ${fmtINR(walletBalance)}.`);
       return;
     }
 
     const positionData = {
       id: uid('pos'),
-
       symbol,
       name,
-
       token,
-
       instrumentKey,
-
       exchange,
       exch_seg: contract?.exch_seg || exchange,
-
       strike: contract?.strike ?? null,
-
-      expiry:
-        contract?.expiry ??
-        contract?.rawExpiry ??
-        null,
-
+      expiry: contract?.expiry ?? contract?.rawExpiry ?? null,
       lots: lotsNum,
-
       lotsize: String(lotSize),
-
       qty: totalUnits,
-
       side,
-
       orderType,
-
       product,
-
       entryPrice: effectivePrice,
-
       currentPrice: currentLtp,
-
-      leverage: `${leverage}x`,
-
+      leverage: `${leverage}X`,
       margin,
-
       notional,
-
       buy_price: effectivePrice,
-
       margin_blocked: margin,
-
       scale_factor: scaleFactor,
-
       status: 'OPEN',
-
-      instrumenttype:
-        contract?.instrumenttype ??
-        contract?.kind ??
-        '',
-
+      instrumenttype: contract?.instrumenttype ?? contract?.kind ?? '',
       tick_size: contract?.tick_size ?? null,
-
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
 
-    onOpenPosition(positionData as Position);
-
-    setSuccess(
-      `${side} ${totalUnits} units (${lotsNum} lots) of ${symbol} @ ${fmtNum(effectivePrice)} (${leverage}x) ${product} placed.`
-    );
-
-    setTimeout(() => {
-      setSuccess(null);
-    }, 3500);
+    setIsSubmitting(true);
+    try {
+      await onOpenPosition(positionData as Position);
+      setSuccess(`${side} ${totalUnits} units (${lotsNum} lots) of ${symbol} @ ${fmtNum(effectivePrice)} (${leverage}x) ${product} placed.`);
+      setTimeout(() => setSuccess(null), 3500);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'The order could not be placed.');
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   const insufficient =
@@ -843,6 +791,7 @@ export function TradePanel({
         type="button"
         onClick={handleSubmit}
         disabled={
+          isSubmitting ||
           insufficient ||
           lotsNum <= 0 ||
           currentLtp <= 0 ||
@@ -854,14 +803,14 @@ export function TradePanel({
             : 'bg-rose-500 text-white hover:bg-rose-400 disabled:opacity-40 shadow-lg shadow-rose-500/20'
         }`}
       >
-        {side} {totalUnits.toLocaleString('en-IN')} {symbol} @ {fmtNum(effectivePrice)}
+        {isSubmitting ? 'Submitting order…' : `${side} ${totalUnits.toLocaleString('en-IN')} ${symbol} @ ${fmtNum(effectivePrice)}`}
       </button>
 
       <div className="mt-3 flex items-start gap-1.5 text-[10px] text-gray-500">
         <Info className="mt-0.5 h-3 w-3 shrink-0" />
 
         <span>
-          Simulated trading environment. Order is submitted to the website position handler.
+          Simulated trading environment. Margin and position updates are validated by the server.
         </span>
       </div>
 

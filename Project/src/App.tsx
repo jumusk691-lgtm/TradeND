@@ -7,47 +7,46 @@ import { INSTRUMENTS } from '@/data/instruments';
 import { usePersistentState } from '@/hooks/usePersistentState';
 import { useLivePrices } from '@/hooks/useLivePrices';
 import { makeTx } from '@/components/WalletPanel';
-import type { DashboardTab, Position, WalletTx } from '@/types';
-
-import { initializeApp, getApps } from 'firebase/app';
-import {
-getDatabase,
-ref,
-onValue,
-set,
-push,
-remove,
-query,
-orderByChild,
-equalTo,
-} from 'firebase/database';
-
-// Firebase configuration
-const firebaseConfig = {
-databaseURL: "https://trade-f600a-default-rtdb.firebaseio.com/"
-};
-
-const app = getApps().length === 0
-? initializeApp(firebaseConfig)
-: getApps()[0];
-
-const db = getDatabase(app);
+import type { DashboardTab, Position, TradeHistoryEntry, WalletTx } from '@/types';
+import { signOut } from 'firebase/auth';
+import { onValue, orderByChild, equalTo, push, query, ref, remove, set } from 'firebase/database';
+import { auth, db } from '@/lib/firebase';
 
 const STARTING_BALANCE = 50000;
 
+async function sendTradingRequest(payload: Record<string, unknown>) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Please sign in again to trade.');
+
+  const token = await user.getIdToken();
+  const response = await fetch('/api/trading', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(typeof result.error === 'string' ? result.error : 'Trading request could not be completed.');
+  }
+
+  return result;
+}
+
 function App() {
+
 const [view, setView] = useState<'splash' | 'dashboard'>('splash');
 const [supportOpen, setSupportOpen] = useState(false);
 
-// Persistent states
-const [walletBalance, setWalletBalance] =
-usePersistentState<number>('tradend:wallet', STARTING_BALANCE);
+const [walletBalance, setWalletBalance] = useState<number>(STARTING_BALANCE);
+const [positions, setPositions] = useState<Position[]>([]);
+const [tradeHistory, setTradeHistory] = useState<TradeHistoryEntry[]>([]);
 
 const [watchlist, setWatchlist] =
 usePersistentState<any[]>('tradend:watchlist', []);
-
-const [positions, setPositions] =
-usePersistentState<Position[]>('tradend:positions', []);
 
 const [transactions, setTransactions] =
 usePersistentState<WalletTx[]>('tradend:txns', []);
@@ -56,40 +55,52 @@ const [activeTab, setActiveTab] =
 usePersistentState<DashboardTab>('tradend:tab', 'markets');
 
 // =====================================================
-// 1. FIREBASE BALANCE LISTENER
+// 1. FIREBASE TRADING ACCOUNT LISTENERS
 // =====================================================
 
 useEffect(() => {
-const currentUid = localStorage.getItem('tradend:uid');
+  const currentUid = localStorage.getItem('tradend:uid');
+  if (!currentUid) {
+    setWalletBalance(STARTING_BALANCE);
+    setPositions([]);
+    setTradeHistory([]);
+    return;
+  }
 
-if (!currentUid) return;  
+  const accountPath = `users_details/${currentUid}`;
+  const unsubscribers = [
+    onValue(ref(db, `${accountPath}/funds/balance`), (snapshot) => {
+      if (!snapshot.exists()) {
+        setWalletBalance(STARTING_BALANCE);
+        return;
+      }
+      const balance = Number(snapshot.val());
+      if (Number.isFinite(balance) && balance >= 0) setWalletBalance(balance);
+    }, (error) => console.error('Firebase balance fetch error:', error)),
+    onValue(ref(db, `${accountPath}/open_positions`), (snapshot) => {
+      const records = snapshot.val();
+      const nextPositions = records && typeof records === 'object'
+        ? Object.entries(records).map(([id, value]) => ({
+            ...(value as Record<string, unknown>),
+            id: String((value as Record<string, unknown>).id ?? id),
+          } as Position))
+        : [];
+      setPositions(nextPositions);
+    }, (error) => console.error('Firebase positions fetch error:', error)),
+    onValue(ref(db, `${accountPath}/trade_history`), (snapshot) => {
+      const records = snapshot.val();
+      const nextHistory = records && typeof records === 'object'
+        ? Object.entries(records).map(([id, value]) => ({
+            ...(value as Record<string, unknown>),
+            id: String((value as Record<string, unknown>).id ?? id),
+          } as TradeHistoryEntry)).sort((a, b) => b.closedAt - a.closedAt)
+        : [];
+      setTradeHistory(nextHistory);
+    }, (error) => console.error('Firebase history fetch error:', error)),
+  ];
 
-const balanceRef = ref(  
-  db,  
-  `users_details/${currentUid}/funds/balance`  
-);  
-
-const unsubscribe = onValue(  
-  balanceRef,  
-  (snapshot) => {  
-    const serverBalance = snapshot.val();  
-
-    if (serverBalance !== null && serverBalance !== undefined) {  
-      const parsedBal = Number(serverBalance);  
-
-      if (Number.isFinite(parsedBal)) {  
-        setWalletBalance(parsedBal);  
-      }  
-    }  
-  },  
-  (error) => {  
-    console.error('Firebase balance fetch error:', error);  
-  }  
-);  
-
-return () => unsubscribe();
-
-}, [view, setWalletBalance]);
+  return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
+}, [view]);
 
 // =====================================================
 // 2. FIREBASE WATCHLIST LISTENER
@@ -251,11 +262,15 @@ if (currentUid) {
 
 const handleBackToSplash = useCallback(() => {
 
-localStorage.removeItem('tradend:uid');  
-localStorage.removeItem('tradend:email');  
-localStorage.removeItem('tradend:name');  
+localStorage.removeItem('tradend:uid');
+localStorage.removeItem('tradend:email');
+localStorage.removeItem('tradend:name');
+void signOut(auth).catch((error) => console.error('Firebase sign out error:', error));
 
-setWatchlist([]);  
+setWatchlist([]);
+setPositions([]);
+setTradeHistory([]);
+setWalletBalance(STARTING_BALANCE);
 
 setView('splash');  
 
@@ -465,60 +480,32 @@ const isObject =
 );
 
 // =====================================================
-// 9. OPEN POSITION
+// 9. SERVER-AUTHORITATIVE POSITION ACTIONS
 // =====================================================
 
-const openPosition = useCallback(
-(p: Position) => {
+const openPosition = useCallback(async (position: Position) => {
+  await sendTradingRequest({
+    action: 'open',
+    symbol: position.symbol,
+    name: position.name,
+    side: position.side,
+    qty: position.qty,
+    entryPrice: position.entryPrice,
+    currentPrice: position.currentPrice,
+    leverage: position.leverage,
+    exchange: position.exchange,
+    product: position.product,
+    orderType: position.orderType,
+  });
+}, []);
 
-setPositions((prev) => [  
-    ...prev,  
-    p  
-  ]);  
+const closePosition = useCallback(async (id: string, exitPrice: number) => {
+  await sendTradingRequest({ action: 'close', id, exitPrice });
+}, []);
 
-  setWalletBalance((balance) =>  
-    Math.max(0, balance - p.margin)  
-  );  
-
-},  
-[setPositions, setWalletBalance]
-
-);
-
-// =====================================================
-// 10. CLOSE POSITION
-// =====================================================
-
-const closePosition = useCallback(
-(id: string) => {
-
-setPositions((prev) => {  
-
-    const pos = prev.find((p) => p.id === id);  
-
-    if (pos) {  
-
-      const cur =  
-        livePrices[pos.symbol] ?? pos.currentPrice;  
-
-      const dir = pos.side === 'BUY' ? 1 : -1;  
-
-      const pnl =  
-        (cur - pos.entryPrice) * pos.qty * dir;  
-
-      setWalletBalance((balance) =>  
-        Math.max(0, balance + pos.margin + pnl)  
-      );  
-    }  
-
-    return prev.filter((p) => p.id !== id);  
-
-  });  
-
-},  
-[setPositions, setWalletBalance, livePrices]
-
-);
+const closeAllPositions = useCallback(async (closePrices: Record<string, number>) => {
+  await sendTradingRequest({ action: 'closeAll', closePrices });
+}, []);
 
 // =====================================================
 // 11. WALLET DEPOSIT
@@ -583,14 +570,16 @@ return (
 
         watchlist={watchlist}  
 
-        positions={positions}  
-        transactions={transactions}  
+        positions={positions}
+        tradeHistory={tradeHistory}
+        transactions={transactions}
 
-        onToggleWatch={toggleWatch}  
-        onRemoveWatch={removeWatch}  
+        onToggleWatch={toggleWatch}
+        onRemoveWatch={removeWatch}
 
-        onOpenPosition={openPosition}  
-        onClosePosition={closePosition}  
+        onOpenPosition={openPosition}
+        onClosePosition={closePosition}
+        onCloseAllPositions={closeAllPositions}
 
         onDeposit={handleDeposit}  
         onWithdraw={handleWithdraw}  
