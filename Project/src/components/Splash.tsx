@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ShieldCheck, Download, ArrowRight, Lock, Zap, TrendingUp } from 'lucide-react';
 import { APK_URL } from '@/types';
 
-// Import distinct modals from separate files
+// Import distinct modals from separate files with exact casing
 import { SignInModal } from '@/components/SignInModal';
 import { RegisterModal } from '@/components/RegisterModal';
 import { ForgotPasswordModal } from '@/components/ForgotPasswordModal';
@@ -119,7 +119,6 @@ export function Splash({ onEnter }: SplashProps) {
             mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
           }`}
         >
-          {/* Trade Now opens SignInModal directly */}
           <button
             onClick={() => setActiveModal('signin')}
             className="group relative inline-flex items-center justify-center gap-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-8 py-4 text-lg font-bold text-white shadow-lg shadow-emerald-900/35 transition-transform hover:scale-[1.03] active:scale-95 w-full sm:w-auto cursor-pointer"
@@ -161,7 +160,7 @@ export function Splash({ onEnter }: SplashProps) {
         </div>
       </div>
 
-      {/* SEPARATE MODAL COMPONENTS ROUTING */}
+      {/* Modals */}
       <SignInModal
         isOpen={activeModal === 'signin'}
         onClose={closeModal}
