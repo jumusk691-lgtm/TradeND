@@ -3,12 +3,10 @@ import { ChevronDown, Plus, Search, Star, BarChart2 } from 'lucide-react';
 import { useMemo, useState, useEffect, useRef } from 'react';
 import type { DerivativeKind, Exchange } from '@/types';
 
-// Same SQLite database file
 const DB_FILE_URL =
-  "https://fnfynhgkdevxytxtfzrk.supabase.co/storage/v1/object/public/myt/angel_master.db";
+  'https://fnfynhgkdevxytxtfzrk.supabase.co/storage/v1/object/public/myt/angel_master.db';
 
-// Same Render WebSocket URL as WatchlistPanel / APK backend
-const RENDER_WS_URL = "wss://myt-backend-1.onrender.com/ws";
+const RENDER_WS_URL = 'wss://myt-backend-1.onrender.com/ws';
 
 interface ContractBrowserProps {
   selected: string;
@@ -29,8 +27,8 @@ function formatExpiryDate(rawExpiry: string): string {
   if (/[a-zA-Z]/.test(rawExpiry)) return rawExpiry;
 
   const monthNames = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
   ];
 
   const parts = rawExpiry.split('-');
@@ -53,14 +51,14 @@ function formatSymbolName(rawSymbol: string): string {
     if (!rawSymbol) return '';
 
     const monthNames = [
-      "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-      "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
+      'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+      'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'
     ];
 
     const upper = rawSymbol.toUpperCase();
 
-    for (const m of monthNames) {
-      if (upper.includes(m)) return rawSymbol;
+    for (const month of monthNames) {
+      if (upper.includes(month)) return rawSymbol;
     }
 
     const match2 = upper.match(/^([A-Z]+)(\d{2})(1[0-2])(\d{2})(.*)$/);
@@ -80,17 +78,18 @@ function formatSymbolName(rawSymbol: string): string {
     const matchLetter = upper.match(/^([A-Z]+)(\d{2})([OND])(\d{2})(.*)$/);
 
     if (matchLetter) {
-      const [, prefix, yy, mLetter, dd, rest] = matchLetter;
-      const mMap: Record<string, string> = {
-        O: "OCT",
-        N: "NOV",
-        D: "DEC"
+      const [, prefix, yy, monthLetter, dd, rest] = matchLetter;
+
+      const monthMap: Record<string, string> = {
+        O: 'OCT',
+        N: 'NOV',
+        D: 'DEC'
       };
 
-      return `${prefix}${yy}${mMap[mLetter]}${dd}${rest}`;
+      return `${prefix}${yy}${monthMap[monthLetter]}${dd}${rest}`;
     }
-  } catch (e) {
-    console.error("Format symbol error:", e);
+  } catch (error) {
+    console.error('Format symbol error:', error);
   }
 
   return rawSymbol;
@@ -101,7 +100,7 @@ export function ContractBrowser({
   onSelect,
   onAddWatch,
   watchlist,
-  onOpenChart,
+  onOpenChart
 }: ContractBrowserProps) {
   const [exchange, setExchange] = useState<ExchangeFilter>('NSE');
   const [kind, setKind] = useState<ContractFilter>('ALL');
@@ -123,21 +122,20 @@ export function ContractBrowser({
     tokens: string[];
   }>({ keys: [], tokens: [] });
 
-  // Keep latest watchlist available to the WebSocket
   useEffect(() => {
     watchlistRef.current = watchlist;
   }, [watchlist]);
 
-  // Send APK-compatible subscription payload
+  // Watchlist ke complete contract data se subscriptions
   const sendSubscriptions = (ws: WebSocket) => {
     if (ws.readyState !== WebSocket.OPEN) return;
 
     const watchKeys = watchlistRef.current
-      .map((w: any) => w?.instrumentKey || '')
+      .map((item: any) => item?.instrumentKey || '')
       .filter(Boolean);
 
     const watchTokens = watchlistRef.current
-      .map((w: any) => w?.token || '')
+      .map((item: any) => item?.token || '')
       .filter(Boolean);
 
     const searchKeys = pendingKeysRef.current.keys;
@@ -151,10 +149,9 @@ export function ContractBrowser({
       new Set([...searchTokens, ...watchTokens])
     );
 
-    // Same default index subscriptions as Android APK
     const indexKeys = [
-      "NSE_INDEX|Nifty 50",
-      "BSE_INDEX|SENSEX"
+      'NSE_INDEX|Nifty 50',
+      'BSE_INDEX|SENSEX'
     ];
 
     const instrumentKeys = Array.from(
@@ -162,18 +159,19 @@ export function ContractBrowser({
     );
 
     ws.send(JSON.stringify({
-      action: "sub",
-      guid: "upstox_sub_request",
+      action: 'sub',
+      guid: 'upstox_sub_request',
       instrumentKeys,
       tokens: combinedTokens
     }));
 
-    console.log(
-      `📡 ContractBrowser subscribed: ${instrumentKeys.length} keys`
-    );
+    console.log('ContractBrowser subscriptions:', {
+      instrumentKeys,
+      tokens: combinedTokens
+    });
   };
 
-  // Connect to the same Render WebSocket as WatchlistPanel
+  // Render WebSocket connection
   useEffect(() => {
     let disposed = false;
 
@@ -185,21 +183,21 @@ export function ContractBrowser({
         wsRef.current = ws;
 
         ws.onopen = () => {
-          console.log("🟢 ContractBrowser connected to Render WS");
+          console.log('ContractBrowser connected to Render WS');
           sendSubscriptions(ws);
         };
 
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            console.log("ContractBrowser WS:", data);
+            console.log('ContractBrowser WS:', data);
           } catch (error) {
-            console.error("WS message parse error:", error);
+            console.error('WS message parse error:', error);
           }
         };
 
         ws.onerror = (error) => {
-          console.error("ContractBrowser WS error:", error);
+          console.error('ContractBrowser WS error:', error);
         };
 
         ws.onclose = () => {
@@ -208,7 +206,7 @@ export function ContractBrowser({
           }
         };
       } catch (error) {
-        console.error("WebSocket connection error:", error);
+        console.error('WebSocket connection error:', error);
 
         if (!disposed) {
           reconnectTimerRef.current = setTimeout(connectWS, 3000);
@@ -233,14 +231,13 @@ export function ContractBrowser({
     };
   }, []);
 
-  // Re-subscribe whenever watchlist changes
   useEffect(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       sendSubscriptions(wsRef.current);
     }
   }, [watchlist]);
 
-  // Initialize SQLite database from Supabase
+  // SQLite database load
   useEffect(() => {
     let cancelled = false;
 
@@ -258,7 +255,6 @@ export function ContractBrowser({
         }
 
         const arrayBuffer = await response.arrayBuffer();
-
         const initSqlJs = (window as any).initSqlJs;
 
         if (!initSqlJs) {
@@ -276,11 +272,11 @@ export function ContractBrowser({
 
         setDbInstance(db);
         setLoading(false);
-      } catch (err: any) {
-        console.error('DB Init Error:', err);
+      } catch (error: any) {
+        console.error('DB Init Error:', error);
 
         if (!cancelled) {
-          setErrorMsg(err?.message || 'Failed to load database');
+          setErrorMsg(error?.message || 'Failed to load database');
           setLoading(false);
         }
       }
@@ -293,7 +289,7 @@ export function ContractBrowser({
     };
   }, []);
 
-  // Search contracts directly from the SQLite DB
+  // Search contracts - SELECT * se database ke saare columns milenge
   const loadSymbolsFromDb = (
     db: any,
     exFilter: string,
@@ -304,8 +300,7 @@ export function ContractBrowser({
       setLoading(true);
 
       let sql = `
-        SELECT token, symbol, exch_seg, strike, expiry,
-               name, lotsize, tick_size, instrumenttype
+        SELECT *
         FROM symbols
         WHERE 1=1
       `;
@@ -358,7 +353,6 @@ export function ContractBrowser({
         AND symbol NOT LIKE '%PE'`;
       }
 
-      // Escape single quotes in user search input
       const rawInput = searchQuery.trim().toUpperCase();
       const safeInput = rawInput.replace(/'/g, "''");
 
@@ -390,98 +384,115 @@ export function ContractBrowser({
 
       sql += ` ORDER BY expiry ASC LIMIT 400;`;
 
-      const res = db.exec(sql);
+      const result = db.exec(sql);
 
-      if (res.length > 0) {
-        const columns = res[0].columns;
-        const values = res[0].values;
+      if (result.length > 0) {
+        const columns = result[0].columns;
+        const values = result[0].values;
 
         const parsed = values.map((row: any) => {
           const rowData: Record<string, any> = {};
 
-          columns.forEach((col: string, idx: number) => {
-            rowData[col] = row[idx];
+          columns.forEach((column: string, index: number) => {
+            rowData[column] = row[index];
           });
 
-          const rawSym = rowData.symbol
-            ? String(rowData.symbol)
-            : '';
+          const rawSymbol = String(rowData.symbol || '');
+          const formattedSymbol = formatSymbolName(rawSymbol);
 
-          const sym = formatSymbolName(rawSym);
+          const instrumentType = String(rowData.instrumenttype || '');
+          const upperType = instrumentType.toUpperCase();
+          const upperSymbol = formattedSymbol.toUpperCase();
 
           let inferredKind: DerivativeKind = 'FUT';
 
           if (
-            sym.endsWith('CE') ||
-            String(rowData.instrumenttype || '').includes('CE')
+            upperSymbol.endsWith('CE') ||
+            upperType.includes('CE')
           ) {
             inferredKind = 'CE';
           } else if (
-            sym.endsWith('PE') ||
-            String(rowData.instrumenttype || '').includes('PE')
+            upperSymbol.endsWith('PE') ||
+            upperType.includes('PE')
           ) {
             inferredKind = 'PE';
           } else if (
-            sym.includes('FUT') ||
-            String(rowData.instrumenttype || '').includes('FUT') ||
-            String(rowData.instrumenttype || '').includes('COM')
+            upperSymbol.includes('FUT') ||
+            upperType.includes('FUT') ||
+            upperType.includes('COM')
           ) {
             inferredKind = 'FUT';
           }
 
-          let exch: Exchange = 'NSE';
           const seg = String(rowData.exch_seg || '').toUpperCase();
 
+          let inferredExchange: Exchange = 'NSE';
+
           if (seg.includes('BSE') || seg.includes('BFO')) {
-            exch = 'BSE';
+            inferredExchange = 'BSE';
           } else if (seg.includes('MCX')) {
-            exch = 'MCX';
+            inferredExchange = 'MCX';
           }
 
-          const rawExp = rowData.expiry
-            ? String(rowData.expiry)
-            : '';
+          const rawExpiry = String(rowData.expiry || '');
+          const token = String(rowData.token || '');
+          const lotsize = String(rowData.lotsize || '1');
+          const tickSize = String(rowData.tick_size || '0.05');
+          const rawName = String(rowData.name || '');
 
-          const tokenVal = String(rowData.token || '');
-          const exactSeg = seg || 'NSE';
-          const instrumentKey = `${exactSeg}|${tokenVal}`;
-
-          const rawName = rowData.name
-            ? String(rowData.name)
-            : '';
+          const instrumentKey = `${seg || 'NSE'}|${token}`;
 
           const formattedName = formatSymbolName(
-            rawName.trim() !== '' ? rawName : sym
+            rawName.trim() !== '' ? rawName : formattedSymbol
           );
 
+          // Original database ke saare fields + normalized fields
           return {
-            token: tokenVal,
-            instrumentKey,
-            symbol: sym,
+            ...rowData,
+
+            token,
+            symbol: formattedSymbol,
+            rawSymbol,
             name: formattedName,
-            exchange: exch,
-            exch_seg: exactSeg,
+
+            exchange: inferredExchange,
+            exch_seg: seg || 'NSE',
+
+            instrumentKey,
+            instrument_key: instrumentKey,
+
+            lotsize,
+            lotSize: Number(lotsize) || 1,
+
+            tick_size: tickSize,
+            tickSize,
+
+            instrumenttype: instrumentType,
+            instrumentType,
+
             kind: inferredKind,
-            rawExpiry: rawExp,
-            expiry: formatExpiryDate(rawExp),
+
+            rawExpiry,
+            expiry: formatExpiryDate(rawExpiry),
+
             strike:
               rowData.strike && rowData.strike !== '0.0'
                 ? Number(rowData.strike)
                 : undefined,
-            lotsize: String(rowData.lotsize || '1'),
-            tick_size: String(rowData.tick_size || '0.05'),
-            instrumenttype: String(rowData.instrumenttype || '')
+
+            // Original SQLite row, including any extra/FII columns
+            databaseData: { ...rowData }
           };
         });
 
         setRawContracts(parsed);
 
         const keys = parsed
-          .map((p: any) => p.instrumentKey)
+          .map((item: any) => item.instrumentKey)
           .filter(Boolean);
 
         const tokens = parsed
-          .map((p: any) => p.token)
+          .map((item: any) => item.token)
           .filter(Boolean);
 
         pendingKeysRef.current = { keys, tokens };
@@ -513,15 +524,15 @@ export function ContractBrowser({
   }, [exchange, kind, search, dbInstance]);
 
   const availableExpiries = useMemo(() => {
-    const expMap = new Map<string, string>();
+    const expiryMap = new Map<string, string>();
 
     rawContracts.forEach((contract) => {
       if (contract.rawExpiry && contract.expiry) {
-        expMap.set(contract.rawExpiry, contract.expiry);
+        expiryMap.set(contract.rawExpiry, contract.expiry);
       }
     });
 
-    return Array.from(expMap.entries())
+    return Array.from(expiryMap.entries())
       .map(([raw, formatted]) => ({ raw, formatted }))
       .sort((a, b) => a.raw.localeCompare(b.raw));
   }, [rawContracts]);
@@ -533,6 +544,35 @@ export function ContractBrowser({
       (contract) => contract.rawExpiry === selectedExpiry
     );
   }, [rawContracts, selectedExpiry]);
+
+  // Watchlist me complete contract object bhejna
+  const handleAddToWatchlist = (contract: any) => {
+    const completeContract = {
+      ...contract,
+
+      // Important APK-compatible fields
+      token: String(contract.token || ''),
+      symbol: String(contract.symbol || ''),
+      name: String(contract.name || ''),
+      exchange: String(contract.exchange || ''),
+      exch_seg: String(contract.exch_seg || ''),
+      instrumentKey: String(contract.instrumentKey || ''),
+      instrument_key: String(contract.instrumentKey || ''),
+      lotsize: String(contract.lotsize || '1'),
+      lotSize: Number(contract.lotsize || 1),
+      tick_size: String(contract.tick_size || '0.05'),
+      instrumenttype: String(contract.instrumenttype || ''),
+
+      // Full original SQLite record
+      databaseData: {
+        ...(contract.databaseData || {})
+      }
+    };
+
+    console.log('FULL CONTRACT SENT TO WATCHLIST:', completeContract);
+
+    onAddWatch(completeContract);
+  };
 
   return (
     <section className="glass rounded-2xl overflow-hidden">
@@ -610,7 +650,7 @@ export function ContractBrowser({
 
               <select
                 value={selectedExpiry}
-                onChange={(e) => setSelectedExpiry(e.target.value)}
+                onChange={(event) => setSelectedExpiry(event.target.value)}
                 className="rounded-lg border border-white/10 bg-black/60 px-3 py-2 text-xs font-bold text-accent focus:outline-none cursor-pointer"
               >
                 <option value="ALL">All Expiries</option>
@@ -641,11 +681,8 @@ export function ContractBrowser({
         <div className="max-h-[410px] overflow-y-auto scrollbar-thin p-2 sm:p-3">
           <div className="mb-2 flex items-center justify-between px-2 text-[10px] uppercase tracking-[0.16em] text-gray-600">
             <span>
-              {exchange === 'ALL'
-                ? 'All exchanges'
-                : `${exchange} contracts`}
+              {exchange === 'ALL' ? 'All exchanges' : `${exchange} contracts`}
             </span>
-
             <span>{contracts.length} contracts</span>
           </div>
 
@@ -660,15 +697,14 @@ export function ContractBrowser({
           ) : (
             <div className="space-y-1.5">
               {contracts.map((contract) => {
-                const selectedContract =
-                  selected === contract.symbol;
+                const selectedContract = selected === contract.symbol;
 
-                const watched = watchlist.some((w: any) =>
-                  typeof w === 'string'
-                    ? w === contract.symbol
+                const watched = watchlist.some((item: any) =>
+                  typeof item === 'string'
+                    ? item === contract.symbol
                     : (
-                        w?.symbol === contract.symbol ||
-                        w?.token === contract.token
+                        item?.symbol === contract.symbol ||
+                        item?.token === contract.token
                       )
                 );
 
@@ -729,8 +765,8 @@ export function ContractBrowser({
 
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
+                      onClick={(event) => {
+                        event.stopPropagation();
                         onSelect(contract.symbol);
                         if (onOpenChart) onOpenChart(contract);
                       }}
@@ -742,32 +778,26 @@ export function ContractBrowser({
 
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onAddWatch(contract);
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleAddToWatchlist(contract);
                       }}
                       className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border cursor-pointer ${
                         watched
                           ? 'border-gold/30 bg-gold/10 text-gold'
                           : 'border-white/5 text-gray-600'
                       }`}
-                      title={
-                        watched
-                          ? "Added to Watchlist"
-                          : "Add to Watchlist"
-                      }
+                      title={watched ? 'Added to Watchlist' : 'Add to Watchlist'}
                     >
                       <Star
-                        className={`h-4 w-4 ${
-                          watched ? 'fill-gold' : ''
-                        }`}
+                        className={`h-4 w-4 ${watched ? 'fill-gold' : ''}`}
                       />
                     </button>
 
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
+                      onClick={(event) => {
+                        event.stopPropagation();
                         onSelect(contract.symbol);
                       }}
                       className="inline-flex h-8 items-center gap-1 rounded-lg bg-gold px-2.5 text-[11px] font-extrabold text-black cursor-pointer"
