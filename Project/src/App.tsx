@@ -8,9 +8,10 @@ import { usePersistentState } from '@/hooks/usePersistentState';
 import { useLivePrices } from '@/hooks/useLivePrices';
 import { makeTx } from '@/components/WalletPanel';
 import type { DashboardTab, Position, TradeHistoryEntry, WalletTx } from '@/types';
-import { signOut } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { onValue, orderByChild, equalTo, push, query, ref, remove, set } from 'firebase/database';
 import { auth, db } from '@/lib/firebase';
+import { normalizeTradeHistory } from '@/lib/tradeHistory';
 
 const STARTING_BALANCE = 50000;
 
@@ -44,6 +45,9 @@ const [supportOpen, setSupportOpen] = useState(false);
 const [walletBalance, setWalletBalance] = useState<number>(STARTING_BALANCE);
 const [positions, setPositions] = useState<Position[]>([]);
 const [tradeHistory, setTradeHistory] = useState<TradeHistoryEntry[]>([]);
+const [firebaseUid, setFirebaseUid] = useState<string | null>(null);
+const [tradeHistoryLoading, setTradeHistoryLoading] = useState(false);
+const [tradeHistoryError, setTradeHistoryError] = useState<string | null>(null);
 
 const [watchlist, setWatchlist] =
 usePersistentState<any[]>('tradend:watchlist', []);
@@ -54,20 +58,37 @@ usePersistentState<WalletTx[]>('tradend:txns', []);
 const [activeTab, setActiveTab] =
 usePersistentState<DashboardTab>('tradend:tab', 'markets');
 
+useEffect(() => onAuthStateChanged(auth, (user) => {
+  const uid = user?.uid ?? null;
+  setFirebaseUid(uid);
+
+  if (uid) {
+    localStorage.setItem('tradend:uid', uid);
+  } else {
+    localStorage.removeItem('tradend:uid');
+    setView('splash');
+  }
+}), []);
+
 // =====================================================
 // 1. FIREBASE TRADING ACCOUNT LISTENERS
 // =====================================================
 
 useEffect(() => {
-  const currentUid = localStorage.getItem('tradend:uid');
+  const currentUid = firebaseUid;
   if (!currentUid) {
     setWalletBalance(STARTING_BALANCE);
     setPositions([]);
     setTradeHistory([]);
+    setTradeHistoryLoading(false);
+    setTradeHistoryError(null);
     return;
   }
 
   const accountPath = `users_details/${currentUid}`;
+  setTradeHistoryLoading(true);
+  setTradeHistoryError(null);
+
   const unsubscribers = [
     onValue(ref(db, `${accountPath}/funds/balance`), (snapshot) => {
       if (!snapshot.exists()) {
@@ -87,27 +108,27 @@ useEffect(() => {
         : [];
       setPositions(nextPositions);
     }, (error) => console.error('Firebase positions fetch error:', error)),
+    // Subscribe to the complete history node; the panel batches rendering for large histories.
     onValue(ref(db, `${accountPath}/trade_history`), (snapshot) => {
-      const records = snapshot.val();
-      const nextHistory = records && typeof records === 'object'
-        ? Object.entries(records).map(([id, value]) => ({
-            ...(value as Record<string, unknown>),
-            id: String((value as Record<string, unknown>).id ?? id),
-          } as TradeHistoryEntry)).sort((a, b) => b.closedAt - a.closedAt)
-        : [];
-      setTradeHistory(nextHistory);
-    }, (error) => console.error('Firebase history fetch error:', error)),
+      setTradeHistory(normalizeTradeHistory(snapshot.val()));
+      setTradeHistoryLoading(false);
+      setTradeHistoryError(null);
+    }, (error) => {
+      console.error('Firebase history fetch error:', error);
+      setTradeHistoryLoading(false);
+      setTradeHistoryError(error.message || 'Unable to load trade history.');
+    }),
   ];
 
   return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-}, [view]);
+}, [firebaseUid]);
 
 // =====================================================
 // 2. FIREBASE WATCHLIST LISTENER
 // =====================================================
 
 useEffect(() => {
-const currentUid = localStorage.getItem('tradend:uid');
+const currentUid = firebaseUid;
 
 if (!currentUid) {  
   setWatchlist([]);  
@@ -201,7 +222,7 @@ return () => {
   });  
 };
 
-}, [view, setWatchlist]);
+}, [firebaseUid, setWatchlist]);
 
 // =====================================================
 // 3. LIVE MARKET PRICES
@@ -238,7 +259,7 @@ return () => {
 
 const handleEnter = useCallback(() => {
 
-const currentUid = localStorage.getItem('tradend:uid');  
+const currentUid = auth.currentUser?.uid ?? localStorage.getItem('tradend:uid');
 
 if (currentUid) {  
   setView('dashboard');  
@@ -405,7 +426,7 @@ const isObject =
     return;  
   }  
 
-  const currentUid = localStorage.getItem('tradend:uid');  
+  const currentUid = auth.currentUser?.uid ?? localStorage.getItem('tradend:uid');
 
   if (!currentUid) {  
     console.error('User UID not found');  
@@ -572,6 +593,8 @@ return (
 
         positions={positions}
         tradeHistory={tradeHistory}
+        historyLoading={tradeHistoryLoading}
+        historyError={tradeHistoryError}
         transactions={transactions}
 
         onToggleWatch={toggleWatch}

@@ -24,6 +24,8 @@ interface DashboardProps {
   watchlist: any[];
   positions: Position[];
   tradeHistory: TradeHistoryEntry[];
+  historyLoading: boolean;
+  historyError: string | null;
   transactions: WalletTx[];
   onToggleWatch: (contract: any) => void;
   onRemoveWatch: (contract: any) => void;
@@ -46,6 +48,8 @@ export function Dashboard(props: DashboardProps) {
     watchlist,
     positions,
     tradeHistory,
+    historyLoading,
+    historyError,
     transactions,
     onToggleWatch,
     onRemoveWatch,
@@ -175,9 +179,11 @@ export function Dashboard(props: DashboardProps) {
             onRemoveWatch={onRemoveWatch}
             walletBalance={walletBalance}
             onOpenPosition={onOpenPosition}
-            positions={positions}
-            tradeHistory={tradeHistory}
-            onClosePosition={onClosePosition}
+          positions={positions}
+          tradeHistory={tradeHistory}
+          historyLoading={historyLoading}
+          historyError={historyError}
+          onClosePosition={onClosePosition}
             onCloseAllPositions={onCloseAllPositions}
           />
         )}
@@ -203,6 +209,8 @@ export function Dashboard(props: DashboardProps) {
               <PositionsPanel
                 positions={positions}
                 history={tradeHistory}
+                historyLoading={historyLoading}
+                historyError={historyError}
                 livePrices={livePrices}
                 onClose={onClosePosition}
                 onCloseAll={onCloseAllPositions}
@@ -228,6 +236,8 @@ export function Dashboard(props: DashboardProps) {
               <PositionsPanel
                 positions={positions}
                 history={tradeHistory}
+                historyLoading={historyLoading}
+                historyError={historyError}
                 livePrices={livePrices}
                 onClose={onClosePosition}
                 onCloseAll={onCloseAllPositions}
@@ -317,6 +327,8 @@ function MarketsView(props: {
   onOpenPosition: (p: Position) => Promise<void>;
   positions: Position[];
   tradeHistory: TradeHistoryEntry[];
+  historyLoading: boolean;
+  historyError: string | null;
   onClosePosition: (id: string, exitPrice: number) => Promise<void>;
   onCloseAllPositions: (closePrices: Record<string, number>) => Promise<void>;
 }) {
@@ -334,6 +346,8 @@ function MarketsView(props: {
     onOpenPosition,
     positions,
     tradeHistory,
+    historyLoading,
+    historyError,
     onClosePosition,
     onCloseAllPositions,
   } = props;
@@ -378,6 +392,8 @@ function MarketsView(props: {
           <PositionsPanel
             positions={positions}
             history={tradeHistory}
+            historyLoading={historyLoading}
+            historyError={historyError}
             livePrices={livePrices}
             onClose={onClosePosition}
             onCloseAll={onCloseAllPositions}
