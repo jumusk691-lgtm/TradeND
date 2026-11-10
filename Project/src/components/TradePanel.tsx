@@ -1,5 +1,3 @@
-TypeScript
-
 import { useEffect, useMemo, useState, useRef } from 'react';
 import {
   Zap,
