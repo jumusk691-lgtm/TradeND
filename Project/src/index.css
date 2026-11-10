@@ -14,7 +14,14 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
   body {
+    margin: 0;
     font-family: 'Inter', system-ui, sans-serif;
     background-color: #ffffff;
     color: #0f172a;
