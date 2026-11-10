@@ -56,6 +56,7 @@ function App() {
   const [activeTab, setActiveTab] =
     usePersistentState<DashboardTab>('tradend:tab', 'markets');
 
+
   // =====================================================
   // 1. FIREBASE BALANCE LISTENER
   // =====================================================
@@ -94,7 +95,7 @@ function App() {
 
 
   // =====================================================
-  // 2. APK MATCHING FIREBASE WATCHLIST LISTENER
+  // 2. FIREBASE WATCHLIST LISTENER
   // =====================================================
 
   useEffect(() => {
@@ -150,13 +151,12 @@ function App() {
 
             nodeData[recordId] = {
               ...item,
-
               __firebaseKey: child.key,
               __sourceNode: nodeName
             };
           });
 
-          // Remove previous records from this Firebase node
+          // Remove old records from this Firebase node
           Object.keys(syncedData).forEach((key) => {
             if (key.startsWith(`${nodeName}_`)) {
               delete syncedData[key];
@@ -277,32 +277,54 @@ function App() {
 
 
   // =====================================================
-  // 7. REMOVE WATCHLIST ITEM FROM ORIGINAL FIREBASE NODE
+  // 7. REMOVE WATCHLIST ITEM
+  // TOKEN-BASED DELETE
   // =====================================================
 
   const removeWatch = useCallback(
     (symbolOrObject: any) => {
 
-      const targetSymbol =
+      const isObject =
         typeof symbolOrObject === 'object' &&
-        symbolOrObject !== null
-          ? symbolOrObject.symbol
-          : symbolOrObject;
+        symbolOrObject !== null;
 
-      const item = watchlist.find((entry) =>
-        typeof entry !== 'string' &&
-        entry?.symbol === targetSymbol
-      );
+      const targetSymbol = isObject
+        ? symbolOrObject.symbol
+        : symbolOrObject;
+
+      const targetToken =
+        isObject && symbolOrObject.token !== undefined &&
+        symbolOrObject.token !== null
+          ? String(symbolOrObject.token)
+          : '';
+
+      if (!targetSymbol && !targetToken) return;
+
+      const item = watchlist.find((entry) => {
+
+        if (!entry || typeof entry === 'string') {
+          return false;
+        }
+
+        if (targetToken) {
+          return String(entry.token || '') === targetToken;
+        }
+
+        return entry.symbol === targetSymbol;
+      });
 
       if (!item) {
-        console.warn('Watchlist item not found:', targetSymbol);
+        console.warn(
+          'Watchlist item not found:',
+          targetToken || targetSymbol
+        );
         return;
       }
 
       if (!item.__firebaseKey || !item.__sourceNode) {
         console.warn(
           'Firebase record information missing:',
-          targetSymbol
+          targetToken || targetSymbol
         );
         return;
       }
@@ -313,7 +335,10 @@ function App() {
       );
 
       remove(itemRef).catch((error) => {
-        console.error('Firebase watchlist delete error:', error);
+        console.error(
+          'Firebase watchlist delete error:',
+          error
+        );
       });
 
     },
@@ -323,6 +348,7 @@ function App() {
 
   // =====================================================
   // 8. ADD / TOGGLE WATCHLIST ITEM
+  // COMPLETE CONTRACT + TOKEN CHECK
   // =====================================================
 
   const toggleWatch = useCallback(
@@ -336,16 +362,39 @@ function App() {
         ? contractOrSymbol.symbol
         : contractOrSymbol;
 
-      if (!targetSymbol) return;
+      const targetToken =
+        isObject &&
+        contractOrSymbol.token !== undefined &&
+        contractOrSymbol.token !== null
+          ? String(contractOrSymbol.token)
+          : '';
 
-      const exists = watchlist.some((item) =>
-        typeof item === 'string'
-          ? item === targetSymbol
-          : item?.symbol === targetSymbol
-      );
+      if (!targetSymbol && !targetToken) return;
 
+      // Check existing contract by token.
+      // If token is unavailable, use symbol as fallback.
+      const exists = watchlist.some((item) => {
+
+        if (!item) return false;
+
+        if (typeof item === 'string') {
+          return !targetToken && item === targetSymbol;
+        }
+
+        if (targetToken) {
+          if (item.token !== undefined && item.token !== null) {
+            return String(item.token) === targetToken;
+          }
+
+          return item.symbol === targetSymbol;
+        }
+
+        return item.symbol === targetSymbol;
+      });
+
+      // If already exists, remove that exact contract
       if (exists) {
-        removeWatch(targetSymbol);
+        removeWatch(contractOrSymbol);
         return;
       }
 
@@ -356,6 +405,7 @@ function App() {
         return;
       }
 
+      // Preserve the complete contract metadata
       const newItem = isObject
         ? { ...contractOrSymbol }
         : {
@@ -366,7 +416,7 @@ function App() {
             lotsize: 1
           };
 
-      // Select the Firebase node
+      // Select Firebase node
       const exchange = String(
         newItem.exch_seg ||
         newItem.exchange ||
@@ -401,7 +451,11 @@ function App() {
 
         console.log(
           `Watchlist saved successfully: ${nodeName}`,
-          targetSymbol
+          {
+            symbol: targetSymbol,
+            token: targetToken,
+            contract: newItem
+          }
         );
 
       } catch (error) {
