@@ -8,7 +8,11 @@ import {
 
 import { getInstrument } from '@/data/instruments';
 import { fmtINR, fmtNum, uid } from '@/lib/format';
-import { calculateMargin, calculateNotional } from '@/lib/tradingMath';
+import {
+  calculateMargin,
+  calculateNotional,
+  getGoldContractGrams,
+} from '@/lib/tradingMath';
 
 import {
   type OrderSide,
@@ -300,6 +304,11 @@ export function TradePanel({
   const isGold =
     symbol.toUpperCase().includes('GOLD');
 
+  const contractGrams = getGoldContractGrams(symbol);
+  const quantityLabel = contractGrams > 0
+    ? `${totalUnits.toLocaleString('en-IN')} lots × ${contractGrams}g = ${(totalUnits * contractGrams).toLocaleString('en-IN')}g`
+    : `${totalUnits.toLocaleString('en-IN')} units`;
+
   // =========================================
   // APK PRICE OFFSET
   // =========================================
@@ -386,12 +395,9 @@ export function TradePanel({
       return 0;
     }
 
-    let unitCost = effectivePrice;
-
-    if (isGold) {
-      unitCost =
-        (effectivePrice / 10) * scaleFactor;
-    }
+    const unitCost = contractGrams > 0
+      ? effectivePrice * (contractGrams / 10) * lotSize
+      : effectivePrice * lotSize;
 
     if (unitCost <= 0) return 0;
 
@@ -734,8 +740,8 @@ export function TradePanel({
       <div className="mb-4 space-y-1.5 rounded-xl border border-white/5 bg-black/40 p-3 text-xs">
 
         <Row
-          label="Total Units / Size"
-          value={`${totalUnits.toLocaleString('en-IN')}`}
+          label={contractGrams > 0 ? 'Quantity × per lot' : 'Total Units / Size'}
+          value={quantityLabel}
         />
 
         <Row

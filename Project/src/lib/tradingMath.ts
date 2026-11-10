@@ -15,11 +15,18 @@ export function roundCurrency(amount: number): number {
   return Math.round((amount + direction * Number.EPSILON) * 100) / 100;
 }
 
+export function getGoldContractGrams(symbol: string): number {
+  const normalized = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (normalized.includes('GOLDGUNIA') || normalized.includes('GOLDGUNEA')) return 8;
+  if (normalized.includes('GOLDTEN')) return 10;
+  if (normalized.includes('GOLDM')) return 100;
+  if (normalized.includes('GOLD')) return 1000;
+  return 0;
+}
+
 export function getContractMultiplier(symbol: string): number {
-  const normalized = symbol.toUpperCase();
-  if (normalized.includes('GOLDM')) return 0.1;
-  if (normalized.includes('GOLD')) return 100;
-  return 1;
+  const grams = getGoldContractGrams(symbol);
+  return grams > 0 ? grams / 10 : 1;
 }
 
 export function calculateNotional(

@@ -116,6 +116,7 @@ export function CandleChart({ symbol, basePrice, livePrice }: CandleChartProps) 
           {TIMEFRAMES.map((tf) => (
             <button
               key={tf}
+              title={tf === '60D' ? '60 daily historical candles' : `${tf} candles`}
               onClick={() => setTimeframe(tf)}
               className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
                 timeframe === tf
