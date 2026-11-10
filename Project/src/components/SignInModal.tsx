@@ -1,7 +1,15 @@
+
 import { useState } from 'react';
 import { Mail, Lock, X } from 'lucide-react';
-import { ref, get, query, orderByChild, equalTo } from 'firebase/database';
-import { db } from '@/lib/firebase';
+import {
+  ref,
+  get,
+  query,
+  orderByChild,
+  equalTo
+} from 'firebase/database';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { db, auth } from '@/lib/firebase';
 
 interface SignInModalProps {
   isOpen: boolean;
@@ -32,12 +40,8 @@ export function SignInModal({
     const cleanInput = identifier.trim();
     const cleanPass = password.trim();
 
-    if (!cleanInput) {
-      setError('Please enter your email or mobile number.');
-      return;
-    }
-    if (!cleanPass) {
-      setError('Please enter your password.');
+    if (!cleanInput || !cleanPass) {
+      setError('Please enter your email/mobile and password.');
       return;
     }
 
@@ -45,63 +49,91 @@ export function SignInModal({
 
     try {
       let targetEmail = cleanInput;
-      let userData: any = null;
-      let emailKey = '';
 
-      // 1. If input is mobile number, find the email from users_details
+      // 1. Find email using mobile number
       if (!cleanInput.includes('@')) {
         const usersRef = ref(db, 'users_details');
-        const mobileQuery = query(usersRef, orderByChild('mobile'), equalTo(cleanInput));
+
+        const mobileQuery = query(
+          usersRef,
+          orderByChild('mobile'),
+          equalTo(cleanInput)
+        );
+
         const snapshot = await get(mobileQuery);
 
         if (!snapshot.exists()) {
-          setError('No account found with this mobile number.');
-          setLoading(false);
-          return;
+          throw new Error('No account found with this mobile number.');
         }
 
         snapshot.forEach((childSnapshot) => {
-          userData = childSnapshot.val();
-          if (userData && userData.email) {
+          const userData = childSnapshot.val();
+
+          if (userData?.email) {
             targetEmail = userData.email;
           }
         });
+
+        if (!targetEmail.includes('@')) {
+          throw new Error('Email not found for this mobile number.');
+        }
       }
 
-      // Format email key for Firebase node lookup (dots replaced by commas)
-      emailKey = targetEmail.toLowerCase().replace(/\./g, ',');
-      const userRef = ref(db, `users_details/${emailKey}`);
-      const userSnap = await get(userRef);
+      // 2. Firebase Authentication Login
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        targetEmail,
+        cleanPass
+      );
 
-      if (!userSnap.exists()) {
-        setError('Account not found in database.');
-        setLoading(false);
-        return;
-      }
+      // 3. Get real Firebase UID
+      const uid = credential.user.uid;
 
-      userData = userSnap.val();
+      // 4. Get user profile using UID
+      const userRef = ref(db, `users_details/${uid}`);
+      const userSnapshot = await get(userRef);
 
-      // 2. Strict Password Validation
-      if (!userData.password || String(userData.password) !== cleanPass) {
-        setError('Incorrect password. Please try again.');
-        setLoading(false);
-        return;
-      }
+      const userData = userSnapshot.exists()
+        ? userSnapshot.val()
+        : null;
 
-      // 3. Save session tokens securely on successful match
-      localStorage.setItem('tradend:uid', emailKey);
-      localStorage.setItem('tradend:email', targetEmail);
-      if (userData.name) {
+      // 5. Save actual Firebase UID
+      localStorage.setItem('tradend:uid', uid);
+      localStorage.setItem('tradend:email', credential.user.email || targetEmail);
+
+      if (userData?.name) {
         localStorage.setItem('tradend:name', userData.name);
       }
 
+      // 6. Complete login
       setIdentifier('');
       setPassword('');
       setError(null);
+
       onSuccess();
+
     } catch (err: any) {
-      console.error('Sign In Error:', err);
-      setError('Connection error. Failed to verify credentials.');
+      console.error('Firebase Login Error:', err);
+
+      const errorCode = err?.code || '';
+
+      if (err.message?.startsWith('No account') ||
+          err.message?.startsWith('Email not found')) {
+        setError(err.message);
+      } else if (
+        errorCode === 'auth/invalid-credential' ||
+        errorCode === 'auth/wrong-password' ||
+        errorCode === 'auth/user-not-found'
+      ) {
+        setError('Incorrect email or password.');
+      } else if (errorCode === 'auth/too-many-requests') {
+        setError('Too many attempts. Please try again later.');
+      } else if (errorCode === 'auth/network-request-failed') {
+        setError('Network error. Please check your internet.');
+      } else {
+        setError(err.message || 'Login failed. Please try again.');
+      }
+
     } finally {
       setLoading(false);
     }
@@ -110,6 +142,7 @@ export function SignInModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fadeIn">
       <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-[#0a0a0c] p-6 shadow-2xl text-left">
+
         <button
           type="button"
           onClick={() => {
@@ -124,21 +157,24 @@ export function SignInModal({
         <div className="mb-6">
           <h2 className="text-xl font-bold text-white">Sign In to Trade</h2>
           <p className="text-xs text-gray-400 mt-1">
-            Enter your email or mobile number &amp; password to access dashboard.
+            Enter your email or mobile number and password.
           </p>
         </div>
 
         <form onSubmit={handleSignIn} className="space-y-4">
+
           <div>
             <label className="block text-[11px] uppercase tracking-wider text-gray-400 mb-1">
               Email or Mobile Number
             </label>
+
             <div className="relative">
               <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-500" />
+
               <input
                 type="text"
                 required
-                placeholder="name@example.com or mobile"
+                placeholder="Email or mobile number"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 className="w-full rounded-xl border border-white/10 bg-black/60 pl-9 pr-4 py-2.5 text-sm text-white focus:border-accent focus:outline-none"
@@ -150,12 +186,14 @@ export function SignInModal({
             <label className="block text-[11px] uppercase tracking-wider text-gray-400 mb-1">
               Password
             </label>
+
             <div className="relative">
               <Lock className="absolute left-3 top-3 h-4 w-4 text-gray-500" />
+
               <input
                 type="password"
                 required
-                placeholder="••••••••"
+                placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full rounded-xl border border-white/10 bg-black/60 pl-9 pr-4 py-2.5 font-mono text-sm text-white focus:border-accent focus:outline-none"
@@ -172,12 +210,13 @@ export function SignInModal({
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-900/40 transition-all disabled:opacity-50 cursor-pointer"
+            className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3 text-sm font-bold text-white shadow-lg transition-all disabled:opacity-50 cursor-pointer"
           >
-            {loading ? 'Verifying...' : 'Sign In'}
+            {loading ? 'Signing In...' : 'Sign In'}
           </button>
 
           <div className="flex items-center justify-between pt-2 text-xs">
+
             <button
               type="button"
               onClick={() => {
@@ -188,6 +227,7 @@ export function SignInModal({
             >
               Forgot Password?
             </button>
+
             <button
               type="button"
               onClick={() => {
@@ -198,6 +238,7 @@ export function SignInModal({
             >
               Create Account
             </button>
+
           </div>
         </form>
       </div>
