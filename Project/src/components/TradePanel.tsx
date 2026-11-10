@@ -305,9 +305,6 @@ export function TradePanel({
     symbol.toUpperCase().includes('GOLD');
 
   const contractGrams = getGoldContractGrams(symbol);
-  const quantityLabel = contractGrams > 0
-    ? `${totalUnits.toLocaleString('en-IN')} lots × ${contractGrams}g = ${(totalUnits * contractGrams).toLocaleString('en-IN')}g`
-    : `${totalUnits.toLocaleString('en-IN')} units`;
 
   // =========================================
   // APK PRICE OFFSET
@@ -360,6 +357,9 @@ export function TradePanel({
   );
 
   const totalUnits = lotsNum * lotSize;
+  const quantityLabel = contractGrams > 0
+    ? `${totalUnits.toLocaleString('en-IN')} lots × ${contractGrams}g = ${(totalUnits * contractGrams).toLocaleString('en-IN')}g`
+    : `${totalUnits.toLocaleString('en-IN')} units`;
 
   // =========================================
   // EFFECTIVE ORDER PRICE
@@ -412,8 +412,7 @@ export function TradePanel({
     leverage,
     effectivePrice,
     lotSize,
-    isGold,
-    scaleFactor
+    contractGrams
   ]);
 
   // =========================================

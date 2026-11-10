@@ -41,6 +41,7 @@ const STEP_VOL: Record<Timeframe, number> = {
   '1H': 0.009,
   '1D': 0.016,
   '1W': 0.03,
+  '60D': 0.016,
 };
 
 const TF_MINUTES: Record<Timeframe, number> = {

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Mail, X } from 'lucide-react';
-import { ref, get } from 'firebase/database';
-import { db } from '@/lib/firebase';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { auth } from '@/lib/firebase';
 
 interface ForgotPasswordModalProps {
   isOpen: boolean;
@@ -35,21 +35,20 @@ export function ForgotPasswordModal({
 
     setLoading(true);
     try {
-      const emailKey = cleanEmail.replace(/\./g, ',');
-      const userRef = ref(db, `users_details/${emailKey}`);
-      const snapshot = await get(userRef);
-
-      if (!snapshot.exists()) {
-        setError('This email address is not registered with us.');
-        setLoading(false);
-        return;
-      }
-
-      const userData = snapshot.val();
-      setSuccessMsg(`Your password is: ${userData.password}`);
-    } catch (err) {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      setSuccessMsg('Password reset instructions were sent to your email address.');
+      setEmail('');
+    } catch (err: any) {
       console.error('Password Recovery Error:', err);
-      setError('Failed to fetch account info.');
+      if (err?.code === 'auth/user-not-found') {
+        setError('This email address is not registered with us.');
+      } else if (err?.code === 'auth/invalid-email') {
+        setError('Please enter a valid email address.');
+      } else if (err?.code === 'auth/network-request-failed') {
+        setError('Network error. Please check your internet connection.');
+      } else {
+        setError('Unable to send reset instructions. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
