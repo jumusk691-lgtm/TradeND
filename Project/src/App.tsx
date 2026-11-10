@@ -1,3 +1,4 @@
+
 import { useCallback, useEffect, useState } from 'react';
 import { Splash } from '@/components/Splash';
 import { Dashboard } from '@/components/Dashboard';
@@ -9,16 +10,28 @@ import { useLivePrices } from '@/hooks/useLivePrices';
 import { makeTx } from '@/components/WalletPanel';
 import type { DashboardTab, Position, WalletTx } from '@/types';
 
-// Firebase imports for Realtime Database balance & watchlist sync
 import { initializeApp, getApps } from 'firebase/app';
-import { getDatabase, ref, onValue, set } from 'firebase/database';
+import {
+  getDatabase,
+  ref,
+  onValue,
+  set,
+  push,
+  remove,
+  query,
+  orderByChild,
+  equalTo,
+} from 'firebase/database';
 
-// Firebase configuration (matches project RTDB)
+// Firebase configuration
 const firebaseConfig = {
   databaseURL: "https://trade-f600a-default-rtdb.firebaseio.com/"
 };
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+const app = getApps().length === 0
+  ? initializeApp(firebaseConfig)
+  : getApps()[0];
+
 const db = getDatabase(app);
 
 const STARTING_BALANCE = 50000;
@@ -27,243 +40,528 @@ function App() {
   const [view, setView] = useState<'splash' | 'dashboard'>('splash');
   const [supportOpen, setSupportOpen] = useState(false);
 
-  // Persistent client-side session state (localStorage fallback)
-  const [walletBalance, setWalletBalance] = usePersistentState<number>(
-    'tradend:wallet',
-    STARTING_BALANCE
-  );
-  
-  // Watchlist initialized as empty
-  const [watchlist, setWatchlist] = usePersistentState<any[]>('tradend:watchlist', []);
-  const [positions, setPositions] = usePersistentState<Position[]>('tradend:positions', []);
-  const [transactions, setTransactions] = usePersistentState<WalletTx[]>(
-    'tradend:txns',
-    []
-  );
-  const [activeTab, setActiveTab] = usePersistentState<DashboardTab>(
-    'tradend:tab',
-    'markets'
-  );
+  // Persistent states
+  const [walletBalance, setWalletBalance] =
+    usePersistentState<number>('tradend:wallet', STARTING_BALANCE);
 
-  // 🔥 1. FIREBASE REAL-TIME BALANCE LISTENER (Re-syncs dynamically on View change / Login)
+  const [watchlist, setWatchlist] =
+    usePersistentState<any[]>('tradend:watchlist', []);
+
+  const [positions, setPositions] =
+    usePersistentState<Position[]>('tradend:positions', []);
+
+  const [transactions, setTransactions] =
+    usePersistentState<WalletTx[]>('tradend:txns', []);
+
+  const [activeTab, setActiveTab] =
+    usePersistentState<DashboardTab>('tradend:tab', 'markets');
+
+  // =====================================================
+  // 1. FIREBASE BALANCE LISTENER
+  // =====================================================
+
   useEffect(() => {
     const currentUid = localStorage.getItem('tradend:uid');
+
     if (!currentUid) return;
 
-    const balanceRef = ref(db, `users_details/${currentUid}/funds/balance`);
+    const balanceRef = ref(
+      db,
+      `users_details/${currentUid}/funds/balance`
+    );
 
     const unsubscribe = onValue(
       balanceRef,
       (snapshot) => {
         const serverBalance = snapshot.val();
+
         if (serverBalance !== null && serverBalance !== undefined) {
           const parsedBal = Number(serverBalance);
-          if (!isNaN(parsedBal)) {
+
+          if (Number.isFinite(parsedBal)) {
             setWalletBalance(parsedBal);
           }
         }
       },
       (error) => {
-        console.error("Firebase balance fetch error:", error);
+        console.error('Firebase balance fetch error:', error);
       }
     );
 
     return () => unsubscribe();
+
   }, [view, setWalletBalance]);
 
-  // 🔥 2. FIREBASE REAL-TIME WATCHLIST SYNC (User Isolation)
+
+  // =====================================================
+  // 2. APK MATCHING FIREBASE WATCHLIST LISTENER
+  // =====================================================
+
   useEffect(() => {
     const currentUid = localStorage.getItem('tradend:uid');
-    if (!currentUid) return;
 
-    const watchlistRef = ref(db, `users_details/${currentUid}/watchlist`);
+    if (!currentUid) {
+      setWatchlist([]);
+      return;
+    }
 
-    const unsubscribe = onValue(
-      watchlistRef,
-      (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-          const listArray = Array.isArray(data) ? data : Object.values(data);
-          setWatchlist(listArray);
-        } else {
-          set(watchlistRef, []);
+    const sources = [
+      'central_watchlist',
+      'forex_watchlist'
+    ];
+
+    const syncedData: Record<string, any> = {};
+
+    const unsubscribeList: Array<() => void> = [];
+
+    let active = true;
+
+    const updateCombinedWatchlist = () => {
+      if (!active) return;
+
+      const combined = Object.values(syncedData);
+
+      setWatchlist(combined);
+    };
+
+    sources.forEach((nodeName) => {
+
+      const watchQuery = query(
+        ref(db, nodeName),
+        orderByChild('uid'),
+        equalTo(currentUid)
+      );
+
+      const unsubscribe = onValue(
+        watchQuery,
+
+        (snapshot) => {
+          if (!active) return;
+
+          const nodeData: Record<string, any> = {};
+
+          snapshot.forEach((child) => {
+
+            const item = child.val();
+
+            if (!item || !item.token) return;
+
+            const recordId = `${nodeName}_${child.key}`;
+
+            nodeData[recordId] = {
+              ...item,
+
+              __firebaseKey: child.key,
+              __sourceNode: nodeName
+            };
+          });
+
+          // Remove previous records from this Firebase node
+          Object.keys(syncedData).forEach((key) => {
+            if (key.startsWith(`${nodeName}_`)) {
+              delete syncedData[key];
+            }
+          });
+
+          // Add latest records
+          Object.assign(syncedData, nodeData);
+
+          updateCombinedWatchlist();
+
+          console.log(
+            `Firebase ${nodeName} loaded:`,
+            Object.keys(nodeData).length
+          );
+        },
+
+        (error) => {
+          console.error(
+            `Firebase ${nodeName} fetch error:`,
+            error
+          );
         }
-      },
-      (error) => {
-        console.error("Firebase watchlist sync error:", error);
-      }
-    );
+      );
 
-    return () => unsubscribe();
+      unsubscribeList.push(unsubscribe);
+    });
+
+    return () => {
+      active = false;
+
+      unsubscribeList.forEach((unsubscribe) => {
+        unsubscribe();
+      });
+    };
+
   }, [view, setWatchlist]);
 
-  // Live prices for the ticker
+
+  // =====================================================
+  // 3. LIVE MARKET PRICES
+  // =====================================================
+
   const seeds: Record<string, number> = {};
-  for (const i of INSTRUMENTS) seeds[i.symbol] = i.price;
+
+  for (const instrument of INSTRUMENTS) {
+    seeds[instrument.symbol] = instrument.price;
+  }
+
   const livePrices = useLivePrices(seeds, 2200);
 
-  // Lock body scroll while on splash
+
+  // =====================================================
+  // 4. BODY SCROLL CONTROL
+  // =====================================================
+
   useEffect(() => {
     if (view === 'splash') {
       document.body.classList.add('splash-locked');
     } else {
       document.body.classList.remove('splash-locked');
     }
-    return () => document.body.classList.remove('splash-locked');
+
+    return () => {
+      document.body.classList.remove('splash-locked');
+    };
+
   }, [view]);
 
-  // 🌟 3. SECURE HANDLE ENTER (Verifies active login UID before entering Dashboard)
+
+  // =====================================================
+  // 5. ENTER DASHBOARD
+  // =====================================================
+
   const handleEnter = useCallback(() => {
+
     const currentUid = localStorage.getItem('tradend:uid');
+
     if (currentUid) {
       setView('dashboard');
-      requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
+
+      requestAnimationFrame(() => {
+        window.scrollTo({
+          top: 0,
+          behavior: 'smooth'
+        });
+      });
+
     } else {
-      console.warn("No active UID found. Sign in required.");
+      console.warn('No active UID found. Sign in required.');
     }
+
   }, []);
 
+
+  // =====================================================
+  // 6. LOGOUT
+  // =====================================================
+
   const handleBackToSplash = useCallback(() => {
-    // Clear session on logout / back to splash
+
     localStorage.removeItem('tradend:uid');
     localStorage.removeItem('tradend:email');
     localStorage.removeItem('tradend:name');
+
+    setWatchlist([]);
+
     setView('splash');
-    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
-  }, []);
 
-  // --- Watchlist handlers (Synced directly to Firebase per user UID) ---
-  const updateFirebaseWatchlist = useCallback((newList: any[]) => {
-    setWatchlist(newList);
-    const currentUid = localStorage.getItem('tradend:uid');
-    if (!currentUid) return;
-
-    const watchlistRef = ref(db, `users_details/${currentUid}/watchlist`);
-    set(watchlistRef, newList).catch((err) => {
-      console.error("Failed to update watchlist in Firebase:", err);
+    requestAnimationFrame(() => {
+      window.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
     });
+
   }, [setWatchlist]);
 
-  const toggleWatch = useCallback(
-    (contractOrSymbol: any) => {
-      const isObj = typeof contractOrSymbol === 'object' && contractOrSymbol !== null;
-      const targetSymbol = isObj ? contractOrSymbol.symbol : contractOrSymbol;
 
-      const updatedList = (() => {
-        const exists = watchlist.some((item) => 
-          typeof item === 'string' ? item === targetSymbol : item?.symbol === targetSymbol
-        );
-
-        if (exists) {
-          return watchlist.filter((item) => 
-            typeof item === 'string' ? item !== targetSymbol : item?.symbol !== targetSymbol
-          );
-        } else {
-          const newObj = isObj ? contractOrSymbol : {
-            symbol: targetSymbol,
-            name: targetSymbol,
-            exchange: 'NSE',
-            lotsize: 1
-          };
-          return [...watchlist, newObj];
-        }
-      })();
-
-      updateFirebaseWatchlist(updatedList);
-    },
-    [watchlist, updateFirebaseWatchlist]
-  );
+  // =====================================================
+  // 7. REMOVE WATCHLIST ITEM FROM ORIGINAL FIREBASE NODE
+  // =====================================================
 
   const removeWatch = useCallback(
     (symbolOrObject: any) => {
-      const targetSymbol = typeof symbolOrObject === 'object' && symbolOrObject !== null 
-        ? symbolOrObject.symbol 
-        : symbolOrObject;
 
-      const updatedList = watchlist.filter((item) => 
-        typeof item === 'string' ? item !== targetSymbol : item?.symbol !== targetSymbol
+      const targetSymbol =
+        typeof symbolOrObject === 'object' &&
+        symbolOrObject !== null
+          ? symbolOrObject.symbol
+          : symbolOrObject;
+
+      const item = watchlist.find((entry) =>
+        typeof entry !== 'string' &&
+        entry?.symbol === targetSymbol
       );
 
-      updateFirebaseWatchlist(updatedList);
+      if (!item) {
+        console.warn('Watchlist item not found:', targetSymbol);
+        return;
+      }
+
+      if (!item.__firebaseKey || !item.__sourceNode) {
+        console.warn(
+          'Firebase record information missing:',
+          targetSymbol
+        );
+        return;
+      }
+
+      const itemRef = ref(
+        db,
+        `${item.__sourceNode}/${item.__firebaseKey}`
+      );
+
+      remove(itemRef).catch((error) => {
+        console.error('Firebase watchlist delete error:', error);
+      });
+
     },
-    [watchlist, updateFirebaseWatchlist]
+    [watchlist]
   );
 
-  // --- Position handlers ---
+
+  // =====================================================
+  // 8. ADD / TOGGLE WATCHLIST ITEM
+  // =====================================================
+
+  const toggleWatch = useCallback(
+    async (contractOrSymbol: any) => {
+
+      const isObject =
+        typeof contractOrSymbol === 'object' &&
+        contractOrSymbol !== null;
+
+      const targetSymbol = isObject
+        ? contractOrSymbol.symbol
+        : contractOrSymbol;
+
+      if (!targetSymbol) return;
+
+      const exists = watchlist.some((item) =>
+        typeof item === 'string'
+          ? item === targetSymbol
+          : item?.symbol === targetSymbol
+      );
+
+      if (exists) {
+        removeWatch(targetSymbol);
+        return;
+      }
+
+      const currentUid = localStorage.getItem('tradend:uid');
+
+      if (!currentUid) {
+        console.error('User UID not found');
+        return;
+      }
+
+      const newItem = isObject
+        ? { ...contractOrSymbol }
+        : {
+            symbol: targetSymbol,
+            name: targetSymbol,
+            exchange: 'NSE',
+            exch_seg: 'NSE',
+            lotsize: 1
+          };
+
+      // Select the Firebase node
+      const exchange = String(
+        newItem.exch_seg ||
+        newItem.exchange ||
+        ''
+      ).toUpperCase();
+
+      const instrumentType = String(
+        newItem.instrumenttype ||
+        newItem.kind ||
+        ''
+      ).toUpperCase();
+
+      const isForex =
+        exchange.includes('FOREX') ||
+        exchange.includes('CRYPTO') ||
+        exchange.includes('CURRENCY') ||
+        instrumentType.includes('FOREX') ||
+        instrumentType.includes('CURRENCY');
+
+      const nodeName = isForex
+        ? 'forex_watchlist'
+        : 'central_watchlist';
+
+      const newRef = push(ref(db, nodeName));
+
+      try {
+
+        await set(newRef, {
+          ...newItem,
+          uid: currentUid
+        });
+
+        console.log(
+          `Watchlist saved successfully: ${nodeName}`,
+          targetSymbol
+        );
+
+      } catch (error) {
+
+        console.error(
+          'Firebase watchlist save error:',
+          error
+        );
+
+      }
+
+    },
+    [watchlist, removeWatch]
+  );
+
+
+  // =====================================================
+  // 9. OPEN POSITION
+  // =====================================================
+
   const openPosition = useCallback(
     (p: Position) => {
-      setPositions((prev) => [...prev, p]);
-      setWalletBalance((b) => Math.max(0, b - p.margin));
+
+      setPositions((prev) => [
+        ...prev,
+        p
+      ]);
+
+      setWalletBalance((balance) =>
+        Math.max(0, balance - p.margin)
+      );
+
     },
     [setPositions, setWalletBalance]
   );
 
+
+  // =====================================================
+  // 10. CLOSE POSITION
+  // =====================================================
+
   const closePosition = useCallback(
     (id: string) => {
+
       setPositions((prev) => {
+
         const pos = prev.find((p) => p.id === id);
+
         if (pos) {
-          const cur = livePrices[pos.symbol] ?? pos.currentPrice;
+
+          const cur =
+            livePrices[pos.symbol] ?? pos.currentPrice;
+
           const dir = pos.side === 'BUY' ? 1 : -1;
-          const pnl = (cur - pos.entryPrice) * pos.qty * dir;
-          setWalletBalance((b) => Math.max(0, b + pos.margin + pnl));
+
+          const pnl =
+            (cur - pos.entryPrice) * pos.qty * dir;
+
+          setWalletBalance((balance) =>
+            Math.max(0, balance + pos.margin + pnl)
+          );
         }
+
         return prev.filter((p) => p.id !== id);
+
       });
+
     },
     [setPositions, setWalletBalance, livePrices]
   );
 
-  // --- Wallet handlers ---
+
+  // =====================================================
+  // 11. WALLET DEPOSIT
+  // =====================================================
+
   const handleDeposit = useCallback(
     (amount: number, method: string) => {
-      setWalletBalance((b) => b + amount);
+
+      setWalletBalance((balance) => balance + amount);
+
       setTransactions((prev) => [
         makeTx('DEPOSIT', amount, method, 'COMPLETED'),
-        ...prev,
+        ...prev
       ]);
+
     },
     [setWalletBalance, setTransactions]
   );
 
+
+  // =====================================================
+  // 12. WALLET WITHDRAW
+  // =====================================================
+
   const handleWithdraw = useCallback(
     (amount: number, method: string) => {
-      setWalletBalance((b) => Math.max(0, b - amount));
+
+      setWalletBalance((balance) =>
+        Math.max(0, balance - amount)
+      );
+
       setTransactions((prev) => [
         makeTx('WITHDRAW', amount, method, 'PENDING'),
-        ...prev,
+        ...prev
       ]);
+
     },
     [setWalletBalance, setTransactions]
   );
+
+
+  // =====================================================
+  // 13. APP UI
+  // =====================================================
 
   return (
     <>
       {view === 'splash' ? (
+
         <Splash onEnter={handleEnter} />
+
       ) : (
+
         <>
           <Ticker livePrices={livePrices} />
+
           <Dashboard
             activeTab={activeTab}
             onTabChange={setActiveTab}
+
             walletBalance={walletBalance}
+
             watchlist={watchlist}
+
             positions={positions}
             transactions={transactions}
+
             onToggleWatch={toggleWatch}
             onRemoveWatch={removeWatch}
+
             onOpenPosition={openPosition}
             onClosePosition={closePosition}
+
             onDeposit={handleDeposit}
             onWithdraw={handleWithdraw}
+
             onBackToSplash={handleBackToSplash}
+
             onOpenSupport={() => setSupportOpen(true)}
           />
         </>
+
       )}
 
-      <SupportModal open={supportOpen} onClose={() => setSupportOpen(false)} />
+      <SupportModal
+        open={supportOpen}
+        onClose={() => setSupportOpen(false)}
+      />
+
     </>
   );
 }
