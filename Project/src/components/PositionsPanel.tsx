@@ -1,15 +1,19 @@
 import { X, TrendingUp, TrendingDown, Inbox } from 'lucide-react';
 import { fmtINR, fmtNum, fmtPct } from '@/lib/format';
 import { calculatePositionPnl } from '@/lib/trading';
-import type { Position } from '@/types';
+import type { Position, TradeHistory } from '@/types';
 
 interface PositionsPanelProps {
   positions: Position[];
   livePrices: Record<string, number>;
-  onClose: (id: string) => void;
+  onClose: (id: string, reason?: 'EXIT' | 'EXIT_ALL') => void;
+  onCloseAll: () => void;
+  tradeHistory: TradeHistory[];
+  showTradeHistory: boolean;
+  onToggleTradeHistory: (visible: boolean) => void;
 }
 
-export function PositionsPanel({ positions, livePrices, onClose }: PositionsPanelProps) {
+export function PositionsPanel({ positions, livePrices, onClose, onCloseAll, tradeHistory, showTradeHistory, onToggleTradeHistory }: PositionsPanelProps) {
   const enriched = positions.map((p) => {
     const cur = livePrices[p.symbol] ?? p.currentPrice;
     const pnl = calculatePositionPnl(p, cur);
@@ -126,9 +130,29 @@ export function PositionsPanel({ positions, livePrices, onClose }: PositionsPane
       {enriched.length > 0 && (
         <div className="mt-3 flex items-center justify-between rounded-lg border border-white/5 bg-black/30 px-3 py-2 text-xs">
           <span className="text-gray-500">Used Margin</span>
-          <span className="font-mono text-white">{fmtINR(totalMargin)}</span>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-white">{fmtINR(totalMargin)}</span>
+            <button onClick={onCloseAll} className="rounded-md bg-rose-500/15 px-2 py-1 text-[10px] font-bold text-rose-300 hover:bg-rose-500/25">Exit All</button>
+          </div>
         </div>
       )}
+
+      <div className="mt-4 border-t border-white/5 pt-3">
+        <button onClick={() => onToggleTradeHistory(!showTradeHistory)} className="text-xs font-semibold text-gray-400 hover:text-white">
+          {showTradeHistory ? 'Hide' : 'Show'} Trade History
+        </button>
+        {showTradeHistory && (
+          <div className="mt-2 space-y-1.5 max-h-48 overflow-y-auto">
+            {tradeHistory.length === 0 ? <p className="text-xs text-gray-600">No closed trades yet.</p> : tradeHistory.slice(0, 20).map((trade) => (
+              <div key={trade.id} className="flex items-center justify-between rounded-lg bg-black/20 px-2.5 py-2 text-xs">
+                <span className="text-gray-400">{trade.side} {trade.symbol} · {fmtNum(trade.buyPrice)} → {fmtNum(trade.sellPrice)}</span>
+                <span className={trade.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}>{trade.pnl >= 0 ? '+' : ''}{fmtINR(trade.pnl)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
     </div>
   );
 }

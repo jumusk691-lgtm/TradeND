@@ -7,8 +7,9 @@ import { INSTRUMENTS } from '@/data/instruments';
 import { usePersistentState } from '@/hooks/usePersistentState';
 import { useLivePrices } from '@/hooks/useLivePrices';
 import { makeTx } from '@/components/WalletPanel';
+import { uid as createId } from '@/lib/format';
 import { calculatePositionPnl } from '@/lib/trading';
-import type { DashboardTab, Position, WalletTx } from '@/types';
+import type { DashboardTab, Position, TradeHistory, WalletTx } from '@/types';
 
 import { initializeApp, getApps } from 'firebase/app';
 import {
@@ -53,6 +54,9 @@ usePersistentState<Position[]>('tradend:positions', []);
 const [transactions, setTransactions] =
 usePersistentState<WalletTx[]>('tradend:txns', []);
 
+const [tradeHistory, setTradeHistory] = useState<TradeHistory[]>([]);
+const [showTradeHistory, setShowTradeHistory] = useState(true);
+
 const [activeTab, setActiveTab] =
 usePersistentState<DashboardTab>('tradend:tab', 'markets');
 
@@ -93,7 +97,36 @@ return () => unsubscribe();
 }, [view, setWalletBalance]);
 
 // =====================================================
-// 2. FIREBASE WATCHLIST LISTENER
+// 2. FIREBASE TRADE HISTORY + VISIBILITY
+// =====================================================
+useEffect(() => {
+  const currentUid = localStorage.getItem('tradend:uid');
+  if (!currentUid) {
+    setTradeHistory([]);
+    setShowTradeHistory(true);
+    return;
+  }
+
+  const historyRef = ref(db, `users_details/${currentUid}/trade_history`);
+  const visibilityRef = ref(db, `users_details/${currentUid}/preferences/showTradeHistory`);
+  const unsubHistory = onValue(historyRef, (snapshot) => {
+    const history: TradeHistory[] = [];
+    snapshot.forEach((child) => {
+      const value = child.val();
+      if (value) history.push(value as TradeHistory);
+    });
+    history.sort((a, b) => String(b.closedAt).localeCompare(String(a.closedAt)));
+    setTradeHistory(history);
+  });
+  const unsubVisibility = onValue(visibilityRef, (snapshot) => {
+    const value = snapshot.val();
+    if (typeof value === 'boolean') setShowTradeHistory(value);
+  });
+  return () => { unsubHistory(); unsubVisibility(); };
+}, [view]);
+
+// =====================================================
+// 3. FIREBASE WATCHLIST LISTENER
 // =====================================================
 
 useEffect(() => {
@@ -471,19 +504,19 @@ const isObject =
 
 const openPosition = useCallback(
 (p: Position) => {
+  const safeMargin = Math.max(0, Number(p.margin) || 0);
+  const safePosition: Position = {
+    ...p,
+    margin: safeMargin,
+    maxLoss: safeMargin,
+    status: 'OPEN',
+    openedAt: new Date().toISOString(),
+  };
 
-setPositions((prev) => [  
-    ...prev,  
-    p  
-  ]);  
-
-  setWalletBalance((balance) =>  
-    Math.max(0, balance - p.margin)  
-  );  
-
-},  
+  setPositions((prev) => [...prev, safePosition]);
+  setWalletBalance((balance) => Math.max(0, balance - safeMargin));
+},
 [setPositions, setWalletBalance]
-
 );
 
 // =====================================================
@@ -491,33 +524,35 @@ setPositions((prev) => [
 // =====================================================
 
 const closePosition = useCallback(
-(id: string) => {
+(id: string, reason: 'EXIT' | 'EXIT_ALL' = 'EXIT') => {
+  setPositions((prev) => {
+    const pos = prev.find((p) => p.id === id);
+    if (!pos) return prev;
+    const cur = livePrices[pos.symbol] ?? pos.currentPrice;
+    const pnl = calculatePositionPnl(pos, cur);
+    const uid = localStorage.getItem('tradend:uid');
+    const history: TradeHistory = {
+      id: createId('trade'), positionId: pos.id, symbol: pos.symbol, name: pos.name,
+      side: pos.side, qty: pos.qty, buyPrice: pos.side === 'BUY' ? pos.entryPrice : cur,
+      sellPrice: pos.side === 'BUY' ? cur : pos.entryPrice, pnl, margin: pos.margin,
+      closedAt: new Date().toISOString(), reason,
+    };
+    if (uid) set(push(ref(db, `users_details/${uid}/trade_history`)), history);
+    setWalletBalance((balance) => Math.max(0, balance + pos.margin + pnl));
+    setTradeHistory((items) => [history, ...items]);
+    return prev.filter((item) => item.id !== id);
+  });
+}, [setPositions, setWalletBalance, livePrices]);
 
-setPositions((prev) => {  
+const closeAllPositions = useCallback(() => {
+  positions.forEach((position) => closePosition(position.id, 'EXIT_ALL'));
+}, [positions, closePosition]);
 
-    const pos = prev.find((p) => p.id === id);  
-
-    if (pos) {  
-
-      const cur =  
-        livePrices[pos.symbol] ?? pos.currentPrice;  
-
-      const pnl = calculatePositionPnl(pos, cur);
-
-
-      setWalletBalance((balance) =>  
-        Math.max(0, balance + pos.margin + pnl)  
-      );  
-    }  
-
-    return prev.filter((p) => p.id !== id);  
-
-  });  
-
-},  
-[setPositions, setWalletBalance, livePrices]
-
-);
+const setTradeHistoryVisibility = useCallback((visible: boolean) => {
+  setShowTradeHistory(visible);
+  const uid = localStorage.getItem('tradend:uid');
+  if (uid) set(ref(db, `users_details/${uid}/preferences/showTradeHistory`), visible);
+}, []);
 
 // =====================================================
 // 11. WALLET DEPOSIT
@@ -589,9 +624,13 @@ return (
         onRemoveWatch={removeWatch}  
 
         onOpenPosition={openPosition}  
-        onClosePosition={closePosition}  
+onClosePosition={closePosition}
+        onCloseAllPositions={closeAllPositions}
+        tradeHistory={tradeHistory}
+        showTradeHistory={showTradeHistory}
+        onToggleTradeHistory={setTradeHistoryVisibility}
 
-        onDeposit={handleDeposit}  
+        onDeposit={handleDeposit}
         onWithdraw={handleWithdraw}  
 
         onBackToSplash={handleBackToSplash}  

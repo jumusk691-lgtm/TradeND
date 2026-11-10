@@ -15,7 +15,7 @@ import { Navbar } from '@/components/Navbar';
 import { useLivePrices } from '@/hooks/useLivePrices';
 import { fmtINR } from '@/lib/format';
 
-import type { DashboardTab, Position, WalletTx } from '@/types';
+import type { DashboardTab, Position, TradeHistory, WalletTx } from '@/types';
 
 interface DashboardProps {
   activeTab: DashboardTab;
@@ -27,7 +27,11 @@ interface DashboardProps {
   onToggleWatch: (contract: any) => void;
   onRemoveWatch: (contract: any) => void;
   onOpenPosition: (p: Position) => void;
-  onClosePosition: (id: string) => void;
+  onClosePosition: (id: string, reason?: 'EXIT' | 'EXIT_ALL') => void;
+  onCloseAllPositions: () => void;
+  tradeHistory: TradeHistory[];
+  showTradeHistory: boolean;
+  onToggleTradeHistory: (visible: boolean) => void;
   onDeposit: (amount: number, method: string) => void;
   onWithdraw: (amount: number, method: string) => void;
   onBackToSplash: () => void;
@@ -48,6 +52,10 @@ export function Dashboard(props: DashboardProps) {
     onRemoveWatch,
     onOpenPosition,
     onClosePosition,
+    onCloseAllPositions,
+    tradeHistory,
+    showTradeHistory,
+    onToggleTradeHistory,
     onDeposit,
     onWithdraw,
     onBackToSplash,
@@ -215,6 +223,10 @@ export function Dashboard(props: DashboardProps) {
                 positions={positions}
                 livePrices={livePrices}
                 onClose={onClosePosition}
+                onCloseAll={onCloseAllPositions}
+                tradeHistory={tradeHistory}
+                showTradeHistory={showTradeHistory}
+                onToggleTradeHistory={onToggleTradeHistory}
               />
 
             </div>
@@ -238,6 +250,10 @@ export function Dashboard(props: DashboardProps) {
                 positions={positions}
                 livePrices={livePrices}
                 onClose={onClosePosition}
+                onCloseAll={onCloseAllPositions}
+                tradeHistory={tradeHistory}
+                showTradeHistory={showTradeHistory}
+                onToggleTradeHistory={onToggleTradeHistory}
               />
 
               <WatchlistPanel

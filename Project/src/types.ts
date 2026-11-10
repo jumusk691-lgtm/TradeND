@@ -66,13 +66,31 @@ export interface Position {
   side: OrderSide;
   qty: number;
   entryPrice: number;
-  leverage: Leverage;
+  leverage: Leverage | `${number}x`;
   margin: number;
   currentPrice: number;
   scale_factor?: number;
   lots?: number;
   lotsize?: string | number;
   notional?: number;
+  maxLoss?: number;
+  status?: 'OPEN' | 'CLOSED';
+  openedAt?: string;
+}
+
+export interface TradeHistory {
+  id: string;
+  positionId: string;
+  symbol: string;
+  name: string;
+  side: OrderSide;
+  qty: number;
+  buyPrice: number;
+  sellPrice: number;
+  pnl: number;
+  margin: number;
+  closedAt: string;
+  reason: 'EXIT' | 'EXIT_ALL';
 }
 
 // 🌟 Updated WatchlistItem to support token, lotsize, exchange, etc.

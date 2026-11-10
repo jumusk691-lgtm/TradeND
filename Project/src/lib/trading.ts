@@ -34,7 +34,7 @@ export function positionScaleFactor(position: Position): number {
 }
 
 export function calculatePositionPnl(position: Position, currentPrice: number): number {
-  return calculatePnl(
+  const rawPnl = calculatePnl(
     position.side,
     position.entryPrice,
     currentPrice,
@@ -42,4 +42,7 @@ export function calculatePositionPnl(position: Position, currentPrice: number): 
     position.symbol,
     positionScaleFactor(position),
   );
+
+  // A position cannot lose more than the margin reserved for it.
+  return Math.max(-Math.max(0, position.margin), rawPnl);
 }
