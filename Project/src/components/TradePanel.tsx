@@ -1,4 +1,4 @@
-Import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import useSWR from 'swr';
 import {
   Zap,
