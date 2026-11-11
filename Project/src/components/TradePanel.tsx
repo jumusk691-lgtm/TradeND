@@ -10,6 +10,7 @@ import {
 import { getInstrument } from '@/data/instruments';
 import { fmtINR, fmtNum, uid } from '@/lib/format';
 import {
+  calculateMargin,
   calculateNotional,
   getGoldContractGrams,
 } from '@/lib/tradingMath';
