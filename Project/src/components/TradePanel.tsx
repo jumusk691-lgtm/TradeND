@@ -363,10 +363,6 @@ export function TradePanel({
   const totalUnits = lotsNum * lotSize;
   const totalGrams = lotsNum * actualGramsPerLot;
 
-  const quantityLabel = contractGrams > 0
-    ? `${lotsNum} lots × ${contractGrams}g = ${totalGrams.toLocaleString('en-IN')}g`
-    : `${totalUnits.toLocaleString('en-IN')} units`;
-
   // =========================================
   // EFFECTIVE ORDER PRICE
   // =========================================
@@ -382,7 +378,7 @@ export function TradePanel({
 
   const notional = useMemo(() => {
     if (effectivePrice <= 0) return 0;
-    
+
     const upper = symbol.toUpperCase();
     let pricePerGram = effectivePrice;
 
@@ -783,11 +779,6 @@ export function TradePanel({
       {/* Summary */}
 
       <div className="mb-4 space-y-1.5 rounded-xl border border-white/5 bg-black/40 p-3 text-xs">
-
-        <Row
-          label="Quantity × per lot"
-          value={quantityLabel}
-        />
 
         <Row
           label="LTP"
