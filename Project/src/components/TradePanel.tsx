@@ -359,9 +359,6 @@ export function TradePanel({
   );
 
   const totalUnits = lotsNum * lotSize;
-  const quantityLabel = contractGrams > 0
-    ? `${totalUnits.toLocaleString('en-IN')} lots × ${contractGrams}g = ${(totalUnits * contractGrams).toLocaleString('en-IN')}g`
-    : `${totalUnits.toLocaleString('en-IN')} units`;
 
   // =========================================
   // EFFECTIVE ORDER PRICE
@@ -762,11 +759,6 @@ export function TradePanel({
       {/* Summary */}
 
       <div className="mb-4 space-y-1.5 rounded-xl border border-white/5 bg-black/40 p-3 text-xs">
-
-        <Row
-          label={contractGrams > 0 ? 'Quantity × per lot' : 'Total Units / Size'}
-          value={quantityLabel}
-        />
 
         <Row
           label="LTP"
