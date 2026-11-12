@@ -369,11 +369,6 @@ export function WatchlistPanel({
 
             const name = item.name || sym;
 
-            const exchange =
-              item.exchange ||
-              item.exch_seg ||
-              'NSE';
-
             const tokenKey = String(
               item.token ||
               item.instrumentKey ||
@@ -429,38 +424,6 @@ export function WatchlistPanel({
                     )}
 
                   </div>
-
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-300">
-
-                    <span className="text-gold font-semibold">
-                      {exchange}
-                    </span>
-
-                    {item.expiry && (
-                      <>
-                        <span>·</span>
-                        <span>
-                          Exp: <strong className="text-white">{item.expiry}</strong>
-                        </span>
-                      </>
-                    )}
-
-                    {item.lotsize && (
-                      <>
-                        <span>·</span>
-                        <span>
-                          Lot: <strong className="text-white">{item.lotsize}</strong>
-                        </span>
-                      </>
-                    )}
-
-                  </div>
-
-                  {tokenKey && (
-                    <div className="mt-1 text-[10px] text-gray-500 font-mono">
-                      Token: {tokenKey}
-                    </div>
-                  )}
 
                 </div>
 

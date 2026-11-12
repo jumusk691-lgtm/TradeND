@@ -372,7 +372,8 @@ export function TradePanel({
     return calculateNotional(symbol, effectivePrice, totalUnits);
   }, [symbol, effectivePrice, totalUnits]);
 
-  const estimatedMargin = calculateMargin(notional, leverage);
+  const safeLeverage = Number.isFinite(leverage) && leverage > 0 ? leverage : 1;
+  const fallbackMargin = calculateMargin(notional, safeLeverage);
   const marginRequest = useMemo<MarginRequest | null>(() => {
     if (!instrumentKey || effectivePrice <= 0 || totalUnits <= 0) return null;
     return {
@@ -389,7 +390,17 @@ export function TradePanel({
     ([, request]) => fetchUpstoxMargin(request as MarginRequest),
     { keepPreviousData: false, revalidateOnFocus: false }
   );
-  const requiredMargin = marginData?.finalMargin ?? 0;
+  const liveMarginValue = marginData?.finalMargin;
+  const hasLiveMargin =
+    !marginLoading &&
+    !marginError &&
+    typeof liveMarginValue === 'number' &&
+    Number.isFinite(liveMarginValue) &&
+    liveMarginValue >= 0;
+  const requiredMargin =
+    hasLiveMargin && liveMarginValue !== undefined
+      ? liveMarginValue
+      : fallbackMargin;
 
   // =========================================
   // MAX LOTS BY BALANCE
@@ -452,7 +463,7 @@ export function TradePanel({
       }
     }
 
-    if (marginLoading || marginError || !marginData) {
+    if (!hasLiveMargin) {
       setError(marginError instanceof Error ? marginError.message : 'Waiting for the live Upstox margin calculation.');
       return;
     }
@@ -505,7 +516,6 @@ export function TradePanel({
   }
 
   const insufficient =
-    !marginData ||
     requiredMargin > walletBalance ||
     maxLotsByBalance < lotsNum;
 
@@ -769,7 +779,7 @@ export function TradePanel({
 
         <Row
           label={`Required Margin (${side})`}
-          value={marginLoading ? 'Calculating…' : marginData ? fmtINR(requiredMargin) : 'Unavailable'}
+          value={fmtINR(requiredMargin)}
           highlight={insufficient ? 'text-rose-400' : 'text-white'}
         />
 
@@ -799,7 +809,9 @@ export function TradePanel({
       <div className={`mb-2 rounded-lg border px-3 py-2 text-center text-xs ${
         insufficient ? 'border-rose-500/30 bg-rose-500/10 text-rose-300' : 'border-white/10 bg-black/30 text-gray-300'
       }`}>
-        {marginLoading ? 'Calculating live Upstox margin…' : marginData ? `${side} margin required: ${fmtINR(requiredMargin)}` : 'Live margin unavailable'}
+        {hasLiveMargin
+          ? `${side} margin required: ${fmtINR(requiredMargin)}`
+          : `${side} estimated margin: ${fmtINR(requiredMargin)} (Notional ÷ Leverage)`}
       </div>
 
       <button
@@ -807,6 +819,7 @@ export function TradePanel({
         onClick={handleSubmit}
         disabled={
           isSubmitting ||
+          !hasLiveMargin ||
           insufficient ||
           lotsNum <= 0 ||
           currentLtp <= 0 ||
