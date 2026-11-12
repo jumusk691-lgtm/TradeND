@@ -17,16 +17,30 @@ export function roundCurrency(amount: number): number {
 
 export function getGoldContractGrams(symbol: string): number {
   const normalized = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (normalized.includes('GOLDGUNIA') || normalized.includes('GOLDGUNEA')) return 8;
+  if (normalized.includes('GOLDPETAL')) return 1;
+  if (normalized.includes('GOLDGUINEA')) return 8;
   if (normalized.includes('GOLDTEN')) return 10;
   if (normalized.includes('GOLDM')) return 100;
   if (normalized.includes('GOLD')) return 1000;
   return 0;
 }
 
+function getGoldQuoteGrams(symbol: string): number {
+  const normalized = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (normalized.includes('GOLDPETAL')) return 1;
+  if (normalized.includes('GOLDGUINEA')) return 8;
+  return 10;
+}
+
+export function getPricePerGram(symbol: string, price: number): number {
+  return getGoldContractGrams(symbol) > 0
+    ? price / getGoldQuoteGrams(symbol)
+    : price;
+}
+
 export function getContractMultiplier(symbol: string): number {
-  const grams = getGoldContractGrams(symbol);
-  return grams > 0 ? grams / 10 : 1;
+  const gramsPerLot = getGoldContractGrams(symbol);
+  return gramsPerLot > 0 ? gramsPerLot / getGoldQuoteGrams(symbol) : 1;
 }
 
 export function calculateNotional(
@@ -34,7 +48,11 @@ export function calculateNotional(
   price: number,
   quantity: number
 ): number {
-  return roundCurrency(price * quantity * getContractMultiplier(symbol));
+  const gramsPerLot = getGoldContractGrams(symbol);
+  const notional = gramsPerLot > 0
+    ? quantity * gramsPerLot * getPricePerGram(symbol, price)
+    : price * quantity;
+  return roundCurrency(notional);
 }
 
 export function calculateMargin(notional: number, leverage: number): number {

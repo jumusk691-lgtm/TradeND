@@ -12,7 +12,9 @@ import { fmtINR, fmtNum, uid } from '@/lib/format';
 import {
   calculateMargin,
   calculateNotional,
+  getContractMultiplier,
   getGoldContractGrams,
+  getPricePerGram,
 } from '@/lib/tradingMath';
 import { fetchUpstoxMargin, type MarginRequest, type MarginResult } from '@/lib/upstox';
 
@@ -287,26 +289,13 @@ export function TradePanel({
 
   }, [symbol, token, instrumentKey]);
 
-  // =========================================
-  // APK GOLD SCALE FACTOR
-  // =========================================
-
-  function getGoldScaleFactor(sym: string): number {
-    const upper = sym.toUpperCase();
-
-    if (upper.includes('GOLDM')) return 1;
-
-    if (upper.includes('GOLD')) return 1000;
-
-    return 1;
-  }
-
-  const scaleFactor = getGoldScaleFactor(symbol);
-
-  const isGold =
-    symbol.toUpperCase().includes('GOLD');
-
   const contractGrams = getGoldContractGrams(symbol);
+  const isGoldContract = contractGrams > 0;
+  const lotDescription = isGoldContract
+    ? `(1 Lot = ${contractGrams}g)`
+    : lotSize > 1
+      ? `(1 Lot = ${lotSize})`
+      : '';
 
   // =========================================
   // APK PRICE OFFSET
@@ -358,10 +347,12 @@ export function TradePanel({
     parseInt(lots, 10) || 1
   );
 
-  // Robust grams per lot based on specific contract type
-  const actualGramsPerLot = contractGrams > 0 ? contractGrams : lotSize;
-  const totalUnits = lotsNum * lotSize;
-  const totalGrams = lotsNum * actualGramsPerLot;
+  const gramsPerLot = contractGrams;
+  const totalGrams = lotsNum * gramsPerLot;
+  const totalUnits = lotsNum * (isGoldContract ? 1 : lotSize);
+  const displayQuantity = isGoldContract
+    ? `${totalGrams.toLocaleString('en-IN')}g`
+    : `${totalUnits.toLocaleString('en-IN')} units`;
 
   // =========================================
   // EFFECTIVE ORDER PRICE
@@ -378,25 +369,8 @@ export function TradePanel({
 
   const notional = useMemo(() => {
     if (effectivePrice <= 0) return 0;
-
-    const upper = symbol.toUpperCase();
-    let pricePerGram = effectivePrice;
-
-    if (upper.includes('GOLDPETAL')) {
-      pricePerGram = effectivePrice; // 1g = 1g price
-    } else if (upper.includes('GOLDGUINEA')) {
-      pricePerGram = effectivePrice / 8; // 8g price
-    } else if (upper.includes('GOLDTEN')) {
-      pricePerGram = effectivePrice / 10; // 10g price
-    } else if (upper.includes('GOLDM')) {
-      pricePerGram = effectivePrice / 10; // 10g base quotation
-    } else if (upper.includes('GOLD')) {
-      pricePerGram = effectivePrice / 10; // Standard 1kg contract quoted per 10g
-    }
-
-    // Formula: Total Grams × Price per Gram
-    return totalGrams * pricePerGram;
-  }, [symbol, effectivePrice, totalGrams]);
+    return calculateNotional(symbol, effectivePrice, totalUnits);
+  }, [symbol, effectivePrice, totalUnits]);
 
   const estimatedMargin = calculateMargin(notional, leverage);
   const marginRequest = useMemo<MarginRequest | null>(() => {
@@ -422,33 +396,24 @@ export function TradePanel({
   // =========================================
 
   const maxLotsByBalance = useMemo(() => {
-
-    if (
-      !walletBalance ||
-      effectivePrice <= 0 ||
-      leverage <= 0
-    ) {
+    if (!walletBalance || effectivePrice <= 0 || leverage <= 0) {
       return 0;
     }
 
-    const upper = symbol.toUpperCase();
-    let pricePerGram = effectivePrice;
-    if (upper.includes('GOLDGUINEA')) pricePerGram = effectivePrice / 8;
-    else if (upper.includes('GOLDTEN') || upper.includes('GOLDM') || upper.includes('GOLD')) pricePerGram = effectivePrice / 10;
-
-    const costPerLot = contractGrams > 0 ? actualGramsPerLot * pricePerGram : effectivePrice * lotSize;
+    const costPerLot = isGoldContract
+      ? gramsPerLot * getPricePerGram(symbol, effectivePrice)
+      : effectivePrice * lotSize;
     if (costPerLot <= 0) return 0;
 
     return Math.floor((walletBalance * leverage) / costPerLot);
-
   }, [
     walletBalance,
     leverage,
     effectivePrice,
+    isGoldContract,
+    gramsPerLot,
     lotSize,
-    contractGrams,
-    actualGramsPerLot,
-    symbol
+    symbol,
   ]);
 
   // =========================================
@@ -518,9 +483,9 @@ export function TradePanel({
       leverage: `${leverage}X`,
       margin: requiredMargin,
       notional,
+      contractMultiplier: getContractMultiplier(symbol),
       buy_price: effectivePrice,
       margin_blocked: requiredMargin,
-      scale_factor: scaleFactor,
       status: 'OPEN',
       instrumenttype: contract?.instrumenttype ?? contract?.kind ?? '',
       tick_size: contract?.tick_size ?? null,
@@ -530,7 +495,7 @@ export function TradePanel({
     setIsSubmitting(true);
     try {
       await onOpenPosition(positionData as Position);
-      setSuccess(`${side} ${totalGrams}g (${lotsNum} lots) of ${symbol} @ ${fmtNum(effectivePrice)} (${leverage}x) ${product} placed.`);
+      setSuccess(`${side} ${displayQuantity} (${lotsNum} ${lotsNum === 1 ? 'lot' : 'lots'}) of ${symbol} @ ${fmtNum(effectivePrice)} (${leverage}x) ${product} placed.`);
       setTimeout(() => setSuccess(null), 3500);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'The order could not be placed.');
@@ -572,7 +537,7 @@ export function TradePanel({
             </div>
 
             <div className="text-[11px] text-gray-400 truncate">
-              {name} {lotSize > 1 ? `(1 Lot = ${lotSize})` : ''}
+              {name} {lotDescription}
             </div>
           </div>
 
@@ -710,11 +675,11 @@ export function TradePanel({
 
         <div>
           <label className="mb-1 block text-[11px] uppercase tracking-wider text-gold font-medium">
-            TOTAL QTY (UNITS)
+            {isGoldContract ? 'TOTAL WEIGHT (G)' : 'TOTAL QTY (UNITS)'}
           </label>
 
           <div className="w-full rounded-lg border border-gold/40 bg-gold/10 px-3 py-2.5 font-mono text-base text-gold text-center font-bold flex items-center justify-center shadow-inner">
-            {totalGrams.toLocaleString('en-IN')}g
+            {isGoldContract ? `${totalGrams.toLocaleString('en-IN')}g` : totalUnits.toLocaleString('en-IN')}
           </div>
         </div>
 
@@ -726,7 +691,9 @@ export function TradePanel({
         </span>
 
         <span className="text-gold font-bold">
-          1 Lot = {actualGramsPerLot}g
+          {isGoldContract
+            ? `${lotsNum} lots × ${gramsPerLot}g = ${totalGrams}g`
+            : `1 Lot = ${lotSize} units`}
         </span>
       </div>
 
@@ -851,7 +818,7 @@ export function TradePanel({
             : 'bg-rose-500 text-white hover:bg-rose-400 disabled:opacity-40 shadow-lg shadow-rose-500/20'
         }`}
       >
-        {isSubmitting ? 'Submitting order…' : `${side} ${totalGrams}g ${symbol} @ ${fmtNum(effectivePrice)}`}
+        {isSubmitting ? 'Submitting order…' : `${side} ${displayQuantity} ${symbol} @ ${fmtNum(effectivePrice)}`}
       </button>
 
       <div className="mt-3 flex items-start gap-1.5 text-[10px] text-gray-500">
