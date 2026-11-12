@@ -6,6 +6,8 @@ import {
   calculateCappedPnl,
   calculateMargin,
   calculateNotional,
+  calculateOptionSellMargin,
+  getGoldContractGrams,
   getContractMultiplier,
   roundCurrency,
 } from '../src/lib/tradingMath';
@@ -158,9 +160,33 @@ function openPosition(body: AccountRecord, uid: string) {
     throw new ApiError(400, 'The selected leverage is not available for this exchange.');
   }
 
+  const requestedKind = String(body.kind ?? '').trim().toUpperCase();
+  const optionKind = requestedKind === 'CE' || requestedKind === 'PE'
+    ? requestedKind
+    : null;
+  const lots = Number(body.lots);
+  const lotSize = Number(body.lotSize);
+  if (optionKind) {
+    if (!Number.isSafeInteger(lots) || lots < 1 || lots > MAX_QUANTITY) {
+      throw new ApiError(400, 'Option lots must be a positive whole number.');
+    }
+    if (!Number.isSafeInteger(lotSize) || lotSize < 1 || lotSize > MAX_QUANTITY) {
+      throw new ApiError(400, 'Option lot size must be a positive whole number.');
+    }
+    const expectedQuantity = getGoldContractGrams(symbol) > 0
+      ? lots
+      : lots * lotSize;
+    if (!Number.isSafeInteger(expectedQuantity) || expectedQuantity !== quantity) {
+      throw new ApiError(400, 'Option quantity must match its lot count and lot size.');
+    }
+  }
+
   const contractMultiplier = getContractMultiplier(symbol);
   const notional = calculateNotional(symbol, entryPrice, quantity);
-  const margin = calculateMargin(notional, leverage);
+  const isOptionSell = side === 'SELL' && optionKind !== null;
+  const margin = isOptionSell
+    ? calculateOptionSellMargin(lots)
+    : calculateMargin(notional, leverage);
   if (!Number.isFinite(margin) || margin <= 0) {
     throw new ApiError(400, 'The calculated margin is invalid.');
   }
@@ -182,6 +208,7 @@ function openPosition(body: AccountRecord, uid: string) {
     exchange,
     product: body.product === 'DELIVERY' ? 'DELIVERY' : 'INTRADAY',
     orderType: body.orderType === 'LIMIT' ? 'LIMIT' : 'MARKET',
+    ...(optionKind ? { kind: optionKind, lots, lotSize } : {}),
     openedAt,
     status: 'OPEN',
   };

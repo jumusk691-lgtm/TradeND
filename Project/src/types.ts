@@ -66,6 +66,9 @@ export interface Position {
   name: string;
   side: OrderSide;
   qty: number;
+  lots?: number;
+  lotSize?: number;
+  kind?: DerivativeKind;
   entryPrice: number;
   leverage: Leverage;
   margin: number;

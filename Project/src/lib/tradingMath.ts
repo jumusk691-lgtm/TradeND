@@ -62,6 +62,13 @@ export function calculateMargin(notional: number, leverage: number): number {
   return roundCurrency(notional / leverage);
 }
 
+export const OPTION_SELL_MARGIN_PER_LOT = 120_000;
+
+export function calculateOptionSellMargin(lots: number): number {
+  if (!Number.isSafeInteger(lots) || lots < 1) return 0;
+  return roundCurrency(OPTION_SELL_MARGIN_PER_LOT * lots);
+}
+
 export function calculateGrossPnl(
   position: PnlPosition,
   exitPrice: number
