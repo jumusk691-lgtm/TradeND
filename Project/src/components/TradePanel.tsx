@@ -12,6 +12,7 @@ import { fmtINR, fmtNum, uid } from '@/lib/format';
 import {
   calculateMargin,
   calculateNotional,
+  calculateOptionSellMargin,
   getContractMultiplier,
   getGoldContractGrams,
   getPricePerGram,
@@ -291,6 +292,11 @@ export function TradePanel({
 
   const contractGrams = getGoldContractGrams(symbol);
   const isGoldContract = contractGrams > 0;
+  const optionKind = contract?.kind === 'CE' || contract?.kind === 'PE'
+    ? contract.kind
+    : undefined;
+  const isOptionContract = optionKind !== undefined;
+  const isOptionSell = side === 'SELL' && isOptionContract;
   const lotDescription = isGoldContract
     ? `(1 Lot = ${contractGrams}g)`
     : lotSize > 1
@@ -375,7 +381,7 @@ export function TradePanel({
   const safeLeverage = Number.isFinite(leverage) && leverage > 0 ? leverage : 1;
   const fallbackMargin = calculateMargin(notional, safeLeverage);
   const marginRequest = useMemo<MarginRequest | null>(() => {
-    if (!instrumentKey || effectivePrice <= 0 || totalUnits <= 0) return null;
+    if (isOptionSell || !instrumentKey || effectivePrice <= 0 || totalUnits <= 0) return null;
     return {
       instrumentKey,
       quantity: totalUnits,
@@ -383,7 +389,7 @@ export function TradePanel({
       product: product === 'DELIVERY' ? 'D' : 'I',
       price: effectivePrice,
     };
-  }, [instrumentKey, effectivePrice, totalUnits, side, product]);
+  }, [instrumentKey, effectivePrice, totalUnits, side, product, isOptionSell]);
 
   const { data: marginData, error: marginError, isLoading: marginLoading } = useSWR<MarginResult>(
     marginRequest ? ['upstox-margin', marginRequest] : null,
@@ -397,8 +403,9 @@ export function TradePanel({
     typeof liveMarginValue === 'number' &&
     Number.isFinite(liveMarginValue) &&
     liveMarginValue >= 0;
-  const requiredMargin =
-    hasLiveMargin && liveMarginValue !== undefined
+  const requiredMargin = isOptionSell
+    ? calculateOptionSellMargin(lotsNum)
+    : hasLiveMargin && liveMarginValue !== undefined
       ? liveMarginValue
       : fallbackMargin;
 
@@ -407,6 +414,9 @@ export function TradePanel({
   // =========================================
 
   const maxLotsByBalance = useMemo(() => {
+    if (isOptionSell) {
+      return Math.floor(walletBalance / calculateOptionSellMargin(1));
+    }
     if (!walletBalance || effectivePrice <= 0 || leverage <= 0) {
       return 0;
     }
@@ -421,6 +431,7 @@ export function TradePanel({
     walletBalance,
     leverage,
     effectivePrice,
+    isOptionSell,
     isGoldContract,
     gramsPerLot,
     lotSize,
@@ -463,7 +474,7 @@ export function TradePanel({
       }
     }
 
-    if (!hasLiveMargin) {
+    if (!hasLiveMargin && !isOptionSell) {
       setError(marginError instanceof Error ? marginError.message : 'Waiting for the live Upstox margin calculation.');
       return;
     }
@@ -484,6 +495,8 @@ export function TradePanel({
       strike: contract?.strike ?? null,
       expiry: contract?.expiry ?? contract?.rawExpiry ?? null,
       lots: lotsNum,
+      lotSize,
+      kind: optionKind,
       lotsize: String(lotSize),
       qty: totalUnits,
       side,
@@ -809,9 +822,11 @@ export function TradePanel({
       <div className={`mb-2 rounded-lg border px-3 py-2 text-center text-xs ${
         insufficient ? 'border-rose-500/30 bg-rose-500/10 text-rose-300' : 'border-white/10 bg-black/30 text-gray-300'
       }`}>
-        {hasLiveMargin
-          ? `${side} margin required: ${fmtINR(requiredMargin)}`
-          : `${side} estimated margin: ${fmtINR(requiredMargin)} (Notional ÷ Leverage)`}
+        {isOptionSell
+          ? `Option sell margin: ${fmtINR(requiredMargin)} (${lotsNum} ${lotsNum === 1 ? 'lot' : 'lots'} × ${fmtINR(calculateOptionSellMargin(1))}/lot)`
+          : hasLiveMargin
+            ? `${side} margin required: ${fmtINR(requiredMargin)}`
+            : `${side} estimated margin: ${fmtINR(requiredMargin)} (Notional ÷ Leverage)`}
       </div>
 
       <button
@@ -819,7 +834,7 @@ export function TradePanel({
         onClick={handleSubmit}
         disabled={
           isSubmitting ||
-          !hasLiveMargin ||
+          (!hasLiveMargin && !isOptionSell) ||
           insufficient ||
           lotsNum <= 0 ||
           currentLtp <= 0 ||
