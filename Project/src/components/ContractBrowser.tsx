@@ -2,11 +2,10 @@
 import { ChevronDown, Plus, Search, Star, BarChart2 } from 'lucide-react';
 import { useMemo, useState, useEffect, useRef } from 'react';
 import type { DerivativeKind, Exchange } from '@/types';
+import { RENDER_WS_URL } from '@/lib/marketData';
 
 const DB_FILE_URL =
   'https://fnfynhgkdevxytxtfzrk.supabase.co/storage/v1/object/public/myt/angel_master.db';
-
-const RENDER_WS_URL = 'wss://myt-backend-1.onrender.com/ws';
 
 interface ContractBrowserProps {
   selected: string;

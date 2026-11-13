@@ -5,8 +5,9 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { fmtNum } from '@/lib/format';
 import { db } from '@/lib/firebase';
 import { onValue, ref } from 'firebase/database';
+import { RENDER_WS_URL } from '@/lib/marketData';
 
-const DEFAULT_WS_URL = 'wss://myt-backend-ghpx.onrender.com/ws';
+const DEFAULT_WS_URL = RENDER_WS_URL;
 
 interface WatchlistPanelProps {
   watchlist: any[];

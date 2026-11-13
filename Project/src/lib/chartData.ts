@@ -1,118 +1,49 @@
 import type { Candle, Timeframe } from '@/types';
+import type { MarketTick } from '@/lib/marketData';
 
-// Deterministic pseudo-random generator so charts look stable per symbol/timeframe.
-function mulberry32(seed: number) {
-  return function () {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function hashStr(s: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-const CANDLE_COUNT: Record<Timeframe, number> = {
-  '1M': 500,
-  '3M': 500,
-  '5M': 500,
-  '15M': 500,
-  '30M': 500,
-  '1H': 500,
-  '1D': 500,
-  '1W': 500,
-  '60D': 60,
+const TIMEFRAME_MILLISECONDS: Record<Timeframe, number> = {
+  '1M': 60_000,
+  '3M': 3 * 60_000,
+  '5M': 5 * 60_000,
+  '15M': 15 * 60_000,
+  '30M': 30 * 60_000,
+  '1H': 60 * 60_000,
+  '1D': 24 * 60 * 60_000,
+  '1W': 7 * 24 * 60 * 60_000,
+  '60D': 24 * 60 * 60_000,
 };
 
-const STEP_VOL: Record<Timeframe, number> = {
-  '1M': 0.0009,
-  '3M': 0.0015,
-  '5M': 0.0022,
-  '15M': 0.004,
-  '30M': 0.006,
-  '1H': 0.009,
-  '1D': 0.016,
-  '1W': 0.03,
-  '60D': 0.016,
-};
-
-const TF_MINUTES: Record<Timeframe, number> = {
-  '1M': 1,
-  '3M': 3,
-  '5M': 5,
-  '15M': 15,
-  '30M': 30,
-  '1H': 60,
-  '1D': 1440,
-  '1W': 10080,
-  '60D': 1440,
-};
-
-export function generateCandles(
-  symbol: string,
+export function aggregateTicksToCandles(
+  ticks: MarketTick[],
   timeframe: Timeframe,
-  basePrice: number
+  maxCandles = 120
 ): Candle[] {
-  const count = CANDLE_COUNT[timeframe];
-  const vol = STEP_VOL[timeframe];
-  const stepMs = TF_MINUTES[timeframe] * 60 * 1000;
-  const now = Date.now();
-  const start = now - stepMs * count;
+  const interval = TIMEFRAME_MILLISECONDS[timeframe];
+  const candlesByStart = new Map<number, Candle>();
+  const orderedTicks = ticks
+    .filter((tick) => Number.isFinite(tick.timestamp) && Number.isFinite(tick.price) && tick.price > 0)
+    .slice()
+    .sort((left, right) => left.timestamp - right.timestamp);
 
-  const rng = mulberry32(hashStr(symbol + timeframe));
-  const candles: Candle[] = [];
+  for (const tick of orderedTicks) {
+    const start = Math.floor(tick.timestamp / interval) * interval;
+    const candle = candlesByStart.get(start);
 
-  let prevClose = basePrice * (1 - (rng() - 0.5) * 0.04);
+    if (candle) {
+      candle.high = Math.max(candle.high, tick.price);
+      candle.low = Math.min(candle.low, tick.price);
+      candle.close = tick.price;
+      continue;
+    }
 
-  for (let i = 0; i < count; i++) {
-    const drift = (rng() - 0.5) * 2 * vol * basePrice;
-    const open = prevClose;
-    const close = open + drift;
-    const wickUp = Math.abs(rng() - 0.5) * vol * basePrice * 1.6;
-    const wickDn = Math.abs(rng() - 0.5) * vol * basePrice * 1.6;
-    const high = Math.max(open, close) + wickUp;
-    const low = Math.min(open, close) - wickDn;
-    candles.push({
-      time: start + i * stepMs,
-      open: round2(open),
-      high: round2(high),
-      low: round2(low),
-      close: round2(close),
+    candlesByStart.set(start, {
+      time: start,
+      open: tick.price,
+      high: tick.price,
+      low: tick.price,
+      close: tick.price,
     });
-    prevClose = close;
   }
 
-  // Force last candle close to the live price for consistency.
-  if (candles.length) {
-    candles[candles.length - 1].close = round2(basePrice);
-    candles[candles.length - 1].high = Math.max(
-      candles[candles.length - 1].high,
-      basePrice
-    );
-  }
-  return candles;
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
-/** Animate the latest candle's close toward a new live price (in place). */
-export function tickCandles(candles: Candle[], newPrice: number): Candle[] {
-  if (candles.length === 0) return candles;
-  const next = candles.slice();
-  const last = { ...next[next.length - 1] };
-  last.close = round2(newPrice);
-  last.high = Math.max(last.high, newPrice);
-  last.low = Math.min(last.low, newPrice);
-  next[next.length - 1] = last;
-  return next;
+  return Array.from(candlesByStart.values()).slice(-maxCandles);
 }

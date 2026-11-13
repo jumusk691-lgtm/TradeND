@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import {
   Zap,
@@ -18,6 +18,7 @@ import {
   getPricePerGram,
 } from '@/lib/tradingMath';
 import { fetchUpstoxMargin, type MarginRequest, type MarginResult } from '@/lib/upstox';
+import { getMarketStatus, MARKET_CLOSED_MESSAGE } from '@/lib/marketHours';
 
 import {
   type OrderSide,
@@ -28,18 +29,20 @@ import {
 interface TradePanelProps {
   symbol: string;
   livePrice: number;
+  hasLivePrice: boolean;
+  marketDataConnected: boolean;
   walletBalance: number;
   onOpenPosition: (p: Position) => Promise<void>;
   contract?: any;
 }
-
-const RENDER_WS_URL = 'wss://myt-backend-1.onrender.com/ws';
 
 type ProductType = 'INTRADAY' | 'DELIVERY';
 
 export function TradePanel({
   symbol,
   livePrice,
+  hasLivePrice,
+  marketDataConnected,
   walletBalance,
   onOpenPosition,
   contract
@@ -114,34 +117,23 @@ export function TradePanel({
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
-    setLeverage(defaultLev);
-  }, [defaultLev]);
-
-  const wsRef = useRef<WebSocket | null>(null);
-
-  const reconnectTimerRef =
-    useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const mountedRef = useRef(true);
-
-  // =========================================
-  // LIVE PRICE SYNC
-  // =========================================
+  const [marketNow, setMarketNow] = useState(() => new Date());
 
   useEffect(() => {
-    if (livePrice > 0) {
-      setCurrentLtp(livePrice);
+    const timer = setInterval(() => setMarketNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
-      if (orderType === 'MARKET') {
-        setLimitPrice(fmtNum(livePrice));
-      }
-    }
+  const marketStatus = useMemo(
+    () => getMarketStatus(exchange, marketNow),
+    [exchange, marketNow]
+  );
+
+  useEffect(() => {
+    const nextPrice = Number.isFinite(livePrice) && livePrice > 0 ? livePrice : 0;
+    setCurrentLtp(nextPrice);
+    if (orderType === 'MARKET') setLimitPrice(fmtNum(nextPrice));
   }, [livePrice, orderType]);
-
-  // =========================================
-  // RESET WHEN CONTRACT CHANGES
-  // =========================================
 
   useEffect(() => {
     setLeverage(defaultLev);
@@ -151,144 +143,10 @@ export function TradePanel({
     setProduct('INTRADAY');
     setError(null);
     setSuccess(null);
-
-    if (livePrice > 0) {
-      setCurrentLtp(livePrice);
-      setLimitPrice(fmtNum(livePrice));
-    }
+    const nextPrice = Number.isFinite(livePrice) && livePrice > 0 ? livePrice : 0;
+    setCurrentLtp(nextPrice);
+    setLimitPrice(fmtNum(nextPrice));
   }, [symbol, token, exchange, defaultLev]);
-
-  // =========================================
-  // DIRECT WEBSOCKET LIVE LTP
-  // =========================================
-
-  useEffect(() => {
-    mountedRef.current = true;
-
-    let shouldReconnect = true;
-
-    function connectWS() {
-      if (!shouldReconnect) return;
-
-      let ws: WebSocket;
-
-      try {
-        ws = new WebSocket(RENDER_WS_URL);
-        wsRef.current = ws;
-      } catch (error) {
-        console.error('TradePanel WebSocket error:', error);
-
-        reconnectTimerRef.current = setTimeout(
-          connectWS,
-          3000
-        );
-
-        return;
-      }
-
-      ws.onopen = () => {
-        const keys = [
-          instrumentKey,
-          symbol,
-          token
-        ].filter(Boolean);
-
-        const tokens = [
-          token,
-          instrumentKey
-        ].filter(Boolean);
-
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            action: 'sub',
-            guid: 'tradepanel_direct_sub',
-            instrumentKeys: keys,
-            tokens
-          }));
-        }
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-
-          if (data.type === 'initial_ltps' && data.data) {
-            const value =
-              data.data[instrumentKey] ??
-              data.data[symbol] ??
-              data.data[token];
-
-            if (value !== undefined && Number(value) > 0) {
-              setCurrentLtp(Number(value));
-            }
-
-            return;
-          }
-
-          const key = String(
-            data.instrument_key ||
-            data.instrumentKey ||
-            data.token ||
-            data.symbol ||
-            ''
-          );
-
-          const ltpValue =
-            data.ltp ??
-            data.price ??
-            data.last_price ??
-            0;
-
-          if (!key || Number(ltpValue) <= 0) return;
-
-          const matches =
-            key === symbol ||
-            key === instrumentKey ||
-            key === token;
-
-          if (matches) {
-            setCurrentLtp(Number(ltpValue));
-          }
-
-        } catch (error) {
-          console.error(
-            'TradePanel WS parse error:',
-            error
-          );
-        }
-      };
-
-      ws.onerror = (error) => {
-        console.error('TradePanel WebSocket error:', error);
-      };
-
-      ws.onclose = () => {
-        if (shouldReconnect) {
-          reconnectTimerRef.current = setTimeout(
-            connectWS,
-            3000
-          );
-        }
-      };
-    }
-
-    connectWS();
-
-    return () => {
-      shouldReconnect = false;
-
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-      }
-
-      if (wsRef.current) {
-        wsRef.current.onclose = null;
-        wsRef.current.close();
-        wsRef.current = null;
-      }
-    };
-
-  }, [symbol, token, instrumentKey]);
 
   const contractGrams = getGoldContractGrams(symbol);
   const isGoldContract = contractGrams > 0;
@@ -446,6 +304,17 @@ export function TradePanel({
     setError(null);
     setSuccess(null);
 
+    const currentMarketStatus = getMarketStatus(exchange, new Date());
+    if (!currentMarketStatus.isOpen) {
+      setError(MARKET_CLOSED_MESSAGE);
+      return;
+    }
+
+    if (!hasLivePrice || !marketDataConnected) {
+      setError(marketDataConnected ? 'Waiting for a live market price.' : 'Live market data is disconnected.');
+      return;
+    }
+
     if (!token) {
       setError('Contract token missing. Please select the contract again.');
       return;
@@ -531,6 +400,9 @@ export function TradePanel({
   const insufficient =
     requiredMargin > walletBalance ||
     maxLotsByBalance < lotsNum;
+  const liveFeedLabel = hasLivePrice
+    ? marketDataConnected ? 'Live LTP' : 'Last quote'
+    : marketDataConnected ? 'Waiting for ticks' : 'Connecting';
 
   // =========================================
   // UI
@@ -569,14 +441,21 @@ export function TradePanel({
               {currentLtp > 0 ? fmtNum(currentLtp) : '0.00'}
             </div>
 
-            <div className="text-[11px] text-emerald-400 font-mono flex items-center justify-end gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              Live LTP
+            <div className={`text-[11px] font-mono flex items-center justify-end gap-1 ${hasLivePrice ? 'text-emerald-400' : 'text-amber-300'}`} role="status" aria-live="polite">
+              <span className={`h-1.5 w-1.5 rounded-full ${hasLivePrice && marketDataConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-300'}`} />
+              {liveFeedLabel}
             </div>
           </div>
 
         </div>
       </div>
+
+      {!marketStatus.isOpen && (
+        <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2.5 text-xs text-amber-200" role="status" aria-live="polite">
+          <p className="font-semibold">{MARKET_CLOSED_MESSAGE}</p>
+          <p className="mt-1 text-[11px] text-amber-100/70">{exchange} session: {marketStatus.sessionLabel}</p>
+        </div>
+      )}
 
       {/* Side toggle */}
 
@@ -584,8 +463,11 @@ export function TradePanel({
 
         <button
           type="button"
+          disabled={!marketStatus.isOpen}
+          aria-pressed={side === 'BUY'}
+          title={!marketStatus.isOpen ? MARKET_CLOSED_MESSAGE : undefined}
           onClick={() => setSide('BUY')}
-          className={`flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold transition-all cursor-pointer ${
+          className={`flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 ${
             side === 'BUY'
               ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20'
               : 'bg-black/40 text-gray-400 hover:text-white border border-white/5'
@@ -597,8 +479,11 @@ export function TradePanel({
 
         <button
           type="button"
+          disabled={!marketStatus.isOpen}
+          aria-pressed={side === 'SELL'}
+          title={!marketStatus.isOpen ? MARKET_CLOSED_MESSAGE : undefined}
           onClick={() => setSide('SELL')}
-          className={`flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold transition-all cursor-pointer ${
+          className={`flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 ${
             side === 'SELL'
               ? 'bg-rose-500 text-white shadow-lg shadow-rose-500/20'
               : 'bg-black/40 text-gray-400 hover:text-white border border-white/5'
@@ -833,6 +718,9 @@ export function TradePanel({
         type="button"
         onClick={handleSubmit}
         disabled={
+          !marketStatus.isOpen ||
+          !hasLivePrice ||
+          !marketDataConnected ||
           isSubmitting ||
           (!hasLiveMargin && !isOptionSell) ||
           insufficient ||

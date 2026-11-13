@@ -12,7 +12,8 @@ import { WalletPanel } from '@/components/WalletPanel';
 import { WatchlistPanel } from '@/components/WatchlistPanel';
 import { Navbar } from '@/components/Navbar';
 
-import { useLivePrices } from '@/hooks/useLivePrices';
+import { useSelectedMarketFeed } from '@/hooks/useSelectedMarketFeed';
+import type { MarketTick } from '@/lib/marketData';
 import { fmtINR } from '@/lib/format';
 
 import type { DashboardTab, Position, TradeHistoryEntry, WalletTx } from '@/types';
@@ -92,64 +93,37 @@ export function Dashboard(props: DashboardProps) {
     });
   }, []);
 
-  // Build initial prices.
-  const seeds = useMemo(() => {
-    const prices: Record<string, number> = {};
-
-    for (const instrument of [...INSTRUMENTS, ...DERIVATIVE_CONTRACTS]) {
-      if (instrument?.symbol && Number.isFinite(Number(instrument.price))) {
-        prices[instrument.symbol] = Number(instrument.price);
-      }
-    }
-
-    return prices;
-  }, []);
-
-  // Live market prices.
-  const livePrices = useLivePrices(seeds, 2200);
-
-  // Find selected instrument safely.
   const selectedInstrument = useMemo(() => {
     return (
       getInstrument(selected) ||
-      DERIVATIVE_CONTRACTS.find(
-        (item: any) => item.symbol === selected
-      ) ||
-      INSTRUMENTS.find(
-        (item: any) => item.symbol === selected
-      ) ||
+      DERIVATIVE_CONTRACTS.find((item: any) => item.symbol === selected) ||
+      INSTRUMENTS.find((item: any) => item.symbol === selected) ||
       INSTRUMENTS[0] ||
       DERIVATIVE_CONTRACTS[0] ||
       { symbol: DEFAULT_SYMBOL, price: 0 }
     );
   }, [selected]);
 
-  const basePrice =
-    seeds[selected] ??
-    Number(selectedInstrument?.price) ??
-    0;
-
-  const livePrice =
-    Number(livePrices[selected]) > 0
-      ? Number(livePrices[selected])
-      : basePrice;
-
-  // Get the complete selected contract.
   const activeContract = useMemo(() => {
-    if (selectedContract?.symbol === selected) {
-      return selectedContract;
-    }
+    if (selectedContract?.symbol === selected) return selectedContract;
 
     return (
-      DERIVATIVE_CONTRACTS.find(
-        (item: any) => item.symbol === selected
-      ) ||
-      INSTRUMENTS.find(
-        (item: any) => item.symbol === selected
-      ) ||
+      DERIVATIVE_CONTRACTS.find((item: any) => item.symbol === selected) ||
+      INSTRUMENTS.find((item: any) => item.symbol === selected) ||
       selectedInstrument
     );
   }, [selected, selectedContract, selectedInstrument]);
+
+  const basePrice = Math.max(
+    0,
+    Number(activeContract?.price ?? selectedInstrument?.price ?? 0) || 0
+  );
+  const marketFeed = useSelectedMarketFeed(activeContract, basePrice);
+  const livePrice = marketFeed.livePrice;
+  const livePrices = useMemo(
+    () => livePrice > 0 ? { [selected]: livePrice } : {},
+    [livePrice, selected]
+  );
 
   return (
     <div className="min-h-screen bg-ink text-white">
@@ -174,6 +148,9 @@ export function Dashboard(props: DashboardProps) {
             livePrices={livePrices}
             basePrice={basePrice}
             livePrice={livePrice}
+            ticks={marketFeed.ticks}
+            marketDataConnected={marketFeed.connected}
+            hasLivePrice={marketFeed.hasLivePrice}
             watchlist={watchlist}
             onToggleWatch={onToggleWatch}
             onRemoveWatch={onRemoveWatch}
@@ -228,6 +205,8 @@ export function Dashboard(props: DashboardProps) {
                 symbol={selected}
                 basePrice={basePrice}
                 livePrice={livePrice}
+                ticks={marketFeed.ticks}
+                connected={marketFeed.connected}
               />
             </div>
 
@@ -271,6 +250,9 @@ export function Dashboard(props: DashboardProps) {
                 Zero-brokerage, ultra-secure trading for NSE, BSE &amp; MCX.
                 Built for speed, designed for trust.
               </p>
+              <a href="/source" className="mt-3 inline-flex text-xs font-semibold text-accent hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                Browse source files
+              </a>
             </div>
 
             <FooterCol
@@ -320,6 +302,9 @@ function MarketsView(props: {
   livePrices: Record<string, number>;
   basePrice: number;
   livePrice: number;
+  ticks: MarketTick[];
+  marketDataConnected: boolean;
+  hasLivePrice: boolean;
   watchlist: any[];
   onToggleWatch: (contract: any) => void;
   onRemoveWatch: (contract: any) => void;
@@ -339,6 +324,9 @@ function MarketsView(props: {
     livePrices,
     basePrice,
     livePrice,
+    ticks,
+    marketDataConnected,
+    hasLivePrice,
     watchlist,
     onToggleWatch,
     onRemoveWatch,
@@ -369,6 +357,8 @@ function MarketsView(props: {
             symbol={selected}
             basePrice={basePrice}
             livePrice={livePrice}
+            ticks={ticks}
+            connected={marketDataConnected}
           />
         </div>
 
@@ -378,6 +368,8 @@ function MarketsView(props: {
             symbol={selected}
             contract={selectedContract}
             livePrice={livePrice}
+            hasLivePrice={hasLivePrice}
+            marketDataConnected={marketDataConnected}
             walletBalance={walletBalance}
             onOpenPosition={onOpenPosition}
           />
