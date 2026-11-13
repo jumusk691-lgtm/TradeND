@@ -122,17 +122,17 @@ export function SourceBrowser() {
               Developer reference
             </div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
-              Complete TradeND source
+              Complete trading update source
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
-              Browse the complete source snapshot for the option margin update. Search across files, inspect line numbers, and copy any file in full.
+              Browse the complete files for live market data, candlestick charts, and market-hours validation. Search across files, inspect line numbers, and copy any file in full.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-2 text-xs font-medium text-slate-600">
             <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5">{sourceFiles.length} files</span>
             <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5">TypeScript</span>
-            <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5">Main snapshot</span>
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5">Feature snapshot</span>
           </div>
         </section>
 

@@ -1,34 +1,34 @@
 import { useEffect, useMemo, useState } from 'react';
-import { generateCandles, tickCandles } from '@/lib/chartData';
+import { aggregateTicksToCandles } from '@/lib/chartData';
 import { fmtNum } from '@/lib/format';
+import type { MarketTick } from '@/lib/marketData';
 import { TIMEFRAMES, type Candle, type Timeframe } from '@/types';
 
 interface CandleChartProps {
   symbol: string;
   basePrice: number;
   livePrice: number;
+  ticks: MarketTick[];
+  connected: boolean;
 }
 
-export function CandleChart({ symbol, basePrice, livePrice }: CandleChartProps) {
+export function CandleChart({
+  symbol,
+  basePrice,
+  livePrice,
+  ticks,
+  connected,
+}: CandleChartProps) {
   const [timeframe, setTimeframe] = useState<Timeframe>('15M');
   const [hover, setHover] = useState<Candle | null>(null);
-
-  const baseCandles = useMemo(
-    () => generateCandles(symbol, timeframe, basePrice),
-    [symbol, timeframe, basePrice]
+  const candles = useMemo(
+    () => aggregateTicksToCandles(ticks, timeframe),
+    [ticks, timeframe]
   );
 
-  const [candles, setCandles] = useState<Candle[]>(baseCandles);
-
-  // Regenerate when symbol or timeframe changes.
   useEffect(() => {
-    setCandles(baseCandles);
-  }, [baseCandles]);
-
-  // Tick last candle toward live price.
-  useEffect(() => {
-    setCandles((prev) => tickCandles(prev, livePrice));
-  }, [livePrice]);
+    setHover(null);
+  }, [symbol, timeframe]);
 
   // Layout constants
   const W = 760;
@@ -41,22 +41,20 @@ export function CandleChart({ symbol, basePrice, livePrice }: CandleChartProps) 
   const chartH = H - padB - padT;
 
   const { min, max } = useMemo(() => {
-    let lo = Infinity;
-    let hi = -Infinity;
-    for (const c of candles) {
-      lo = Math.min(lo, c.low);
-      hi = Math.max(hi, c.high);
+    if (candles.length === 0) {
+      const anchor = livePrice > 0 ? livePrice : basePrice > 0 ? basePrice : 1;
+      const padding = Math.max(Math.abs(anchor) * 0.005, 0.01);
+      return { min: anchor - padding, max: anchor + padding };
     }
-    if (!isFinite(lo)) {
-      lo = basePrice * 0.99;
-      hi = basePrice * 1.01;
-    }
-    const pad = (hi - lo) * 0.08;
-    return { min: lo - pad, max: hi + pad };
-  }, [candles, basePrice]);
+
+    const lo = Math.min(...candles.map((candle) => candle.low));
+    const hi = Math.max(...candles.map((candle) => candle.high));
+    const padding = Math.max((hi - lo) * 0.08, Math.abs(hi) * 0.002, 0.01);
+    return { min: lo - padding, max: hi + padding };
+  }, [candles, basePrice, livePrice]);
 
   const range = max - min || 1;
-  const n = candles.length;
+  const n = Math.max(candles.length, 1);
   const slot = chartW / n;
   const bodyW = Math.max(2, slot * 0.62);
 
@@ -74,11 +72,13 @@ export function CandleChart({ symbol, basePrice, livePrice }: CandleChartProps) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [min, max, range]);
 
-  const lastPrice = candles.length ? candles[candles.length - 1].close : basePrice;
-  const firstPrice = candles.length ? candles[0].close : basePrice;
-  const sessionChange = lastPrice - firstPrice;
-  const sessionChangePct = (sessionChange / firstPrice) * 100;
+  const chartClose = candles.length ? candles[candles.length - 1].close : 0;
+  const lastPrice = livePrice > 0 ? livePrice : chartClose;
+  const firstPrice = candles.length ? candles[0].close : lastPrice;
+  const sessionChange = firstPrice > 0 ? lastPrice - firstPrice : 0;
+  const sessionChangePct = firstPrice > 0 ? (sessionChange / firstPrice) * 100 : 0;
   const up = sessionChange >= 0;
+  const hasPrice = lastPrice > 0;
 
   // Area path under close line for subtle fill
   const areaPath = useMemo(() => {
@@ -98,17 +98,23 @@ export function CandleChart({ symbol, basePrice, livePrice }: CandleChartProps) 
         <div className="flex items-baseline gap-3">
           <h3 className="font-display text-lg font-bold text-white">{symbol}</h3>
           <span
-            className={`font-mono text-sm ${up ? 'text-emerald-400' : 'text-rose-400'}`}
+            className={`font-mono text-sm ${hasPrice ? up ? 'text-emerald-400' : 'text-rose-400' : 'text-gray-500'}`}
           >
-            {fmtNum(lastPrice)}
+            {hasPrice ? fmtNum(lastPrice) : '—'}
           </span>
-          <span
-            className={`text-xs font-medium ${up ? 'text-emerald-400' : 'text-rose-400'}`}
-          >
-            {up ? '▲' : '▼'} {fmtNum(Math.abs(sessionChange))} (
-            {sessionChangePct >= 0 ? '+' : ''}
-            {sessionChangePct.toFixed(2)}%)
-          </span>
+          {candles.length > 0 && (
+            <span
+              className={`text-xs font-medium ${up ? 'text-emerald-400' : 'text-rose-400'}`}
+            >
+              {up ? '▲' : '▼'} {fmtNum(Math.abs(sessionChange))} (
+              {sessionChangePct >= 0 ? '+' : ''}
+              {sessionChangePct.toFixed(2)}%)
+            </span>
+          )}
+        </div>
+        <div className={`flex items-center gap-1.5 text-[10px] ${connected && hasPrice ? 'text-emerald-400' : 'text-amber-300'}`} role="status" aria-live="polite">
+          <span className={`h-1.5 w-1.5 rounded-full ${connected && hasPrice ? 'bg-emerald-400 animate-pulse' : 'bg-amber-300'}`} />
+          {connected && hasPrice ? 'Live stream' : connected ? 'Waiting for ticks' : 'Reconnecting'}
         </div>
 
         {/* Timeframe selector */}
@@ -116,7 +122,10 @@ export function CandleChart({ symbol, basePrice, livePrice }: CandleChartProps) 
           {TIMEFRAMES.map((tf) => (
             <button
               key={tf}
-              title={tf === '60D' ? '60 daily historical candles' : `${tf} candles`}
+              type="button"
+              title={`${tf} candles aggregated from live ticks`}
+              aria-label={`Show ${tf} live candles`}
+              aria-pressed={timeframe === tf}
               onClick={() => setTimeframe(tf)}
               className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
                 timeframe === tf
@@ -136,6 +145,8 @@ export function CandleChart({ symbol, basePrice, livePrice }: CandleChartProps) 
           viewBox={`0 0 ${W} ${H}`}
           className="w-full h-auto"
           preserveAspectRatio="none"
+          role="img"
+          aria-label={`Live ${timeframe} candlestick chart for ${symbol}`}
           onMouseLeave={() => setHover(null)}
         >
           {/* Gridlines + price axis */}
@@ -161,17 +172,21 @@ export function CandleChart({ symbol, basePrice, livePrice }: CandleChartProps) 
             </g>
           ))}
 
-          {/* Area fill */}
-          <path
-            d={`${areaPath} L ${x(n - 1)} ${padT + chartH} L ${x(0)} ${padT + chartH} Z`}
-            fill={up ? 'rgba(16,185,129,0.07)' : 'rgba(244,63,94,0.07)'}
-          />
-          <path
-            d={areaPath}
-            fill="none"
-            stroke={up ? 'rgba(16,185,129,0.35)' : 'rgba(244,63,94,0.35)'}
-            strokeWidth={1}
-          />
+          {candles.length > 0 && (
+            <>
+              {/* Area fill */}
+              <path
+                d={`${areaPath} L ${x(n - 1)} ${padT + chartH} L ${x(0)} ${padT + chartH} Z`}
+                fill={up ? 'rgba(16,185,129,0.07)' : 'rgba(244,63,94,0.07)'}
+              />
+              <path
+                d={areaPath}
+                fill="none"
+                stroke={up ? 'rgba(16,185,129,0.35)' : 'rgba(244,63,94,0.35)'}
+                strokeWidth={1}
+              />
+            </>
+          )}
 
           {/* Candles */}
           {candles.map((c, i) => {
@@ -218,36 +233,46 @@ export function CandleChart({ symbol, basePrice, livePrice }: CandleChartProps) 
             );
           })}
 
-          {/* Live price line */}
-          <line
-            x1={padL}
-            y1={y(lastPrice)}
-            x2={padL + chartW}
-            y2={y(lastPrice)}
-            stroke={up ? '#10b981' : '#f43f5e'}
-            strokeWidth={1}
-            strokeDasharray="4 3"
-            opacity={0.6}
-          />
-          <rect
-            x={padL + chartW + 2}
-            y={y(lastPrice) - 8}
-            width={padR - 4}
-            height={16}
-            rx={3}
-            fill={up ? '#10b981' : '#f43f5e'}
-          />
-          <text
-            x={padL + chartW + 6}
-            y={y(lastPrice) + 3}
-            fill="#000"
-            fontSize={9}
-            fontWeight={600}
-            fontFamily="JetBrains Mono, monospace"
-          >
-            {fmtNum(lastPrice)}
-          </text>
+          {hasPrice && (
+            <>
+              {/* Live price line */}
+              <line
+                x1={padL}
+                y1={y(lastPrice)}
+                x2={padL + chartW}
+                y2={y(lastPrice)}
+                stroke={up ? '#10b981' : '#f43f5e'}
+                strokeWidth={1}
+                strokeDasharray="4 3"
+                opacity={0.6}
+              />
+              <rect
+                x={padL + chartW + 2}
+                y={y(lastPrice) - 8}
+                width={padR - 4}
+                height={16}
+                rx={3}
+                fill={up ? '#10b981' : '#f43f5e'}
+              />
+              <text
+                x={padL + chartW + 6}
+                y={y(lastPrice) + 3}
+                fill="#000"
+                fontSize={9}
+                fontWeight={600}
+                fontFamily="JetBrains Mono, monospace"
+              >
+                {fmtNum(lastPrice)}
+              </text>
+            </>
+          )}
         </svg>
+
+        {candles.length === 0 && (
+          <div className="pointer-events-none absolute inset-0 grid place-items-center text-center text-xs text-gray-500" role="status" aria-live="polite">
+            {connected ? 'Waiting for live ticks to build candles…' : 'Connecting to the live market feed…'}
+          </div>
+        )}
 
         {/* Hover tooltip */}
         {hover && (

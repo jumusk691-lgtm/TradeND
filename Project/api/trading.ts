@@ -11,6 +11,7 @@ import {
   getContractMultiplier,
   roundCurrency,
 } from '../src/lib/tradingMath';
+import { getMarketStatus, MARKET_CLOSED_MESSAGE } from '../src/lib/marketHours';
 
 type AccountRecord = Record<string, any>;
 type MutationResult =
@@ -111,6 +112,11 @@ function leverageChoices(exchange: string): number[] {
     : [1, 2, 3, 5, 7, 10];
 }
 
+function requireOpenMarket(exchange: string) {
+  const status = getMarketStatus(exchange, new Date());
+  if (!status.isOpen) throw new ApiError(409, MARKET_CLOSED_MESSAGE);
+}
+
 function cloneAccount(value: unknown): AccountRecord {
   const account = requireObject(value);
   return JSON.parse(JSON.stringify(account)) as AccountRecord;
@@ -149,6 +155,7 @@ function openPosition(body: AccountRecord, uid: string) {
   const exchange = typeof body.exchange === 'string'
     ? body.exchange.trim().slice(0, 24)
     : 'NSE';
+  requireOpenMarket(exchange);
   const quantity = Number(body.qty);
   if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > MAX_QUANTITY) {
     throw new ApiError(400, 'Quantity must be a positive whole number.');
@@ -214,6 +221,11 @@ function openPosition(body: AccountRecord, uid: string) {
   };
 
   return transactAccount<{ position: typeof position; balance: number }>(uid, (account) => {
+    const currentMarketStatus = getMarketStatus(exchange, new Date());
+    if (!currentMarketStatus.isOpen) {
+      return { ok: false, error: MARKET_CLOSED_MESSAGE };
+    }
+
     const funds = requireObject(account.funds);
     const storedBalance = funds.balance === undefined || funds.balance === null
       ? STARTING_BALANCE
@@ -304,6 +316,8 @@ function closeOne(body: AccountRecord, uid: string) {
     const openPositions = requireObject(account.open_positions);
     const position = requireObject(openPositions[positionId]);
     if (!position.id) return { ok: false, error: 'This position is no longer open.' };
+    const marketStatus = getMarketStatus(String(position.exchange ?? 'NSE'), new Date());
+    if (!marketStatus.isOpen) return { ok: false, error: MARKET_CLOSED_MESSAGE };
     const funds = requireObject(account.funds);
     const balance = Number(funds.balance ?? 0);
     if (!Number.isFinite(balance) || balance < 0) {
@@ -348,6 +362,8 @@ function closeAll(body: AccountRecord, uid: string) {
 
     for (const [positionId, rawPosition] of entries) {
       const position = requireObject(rawPosition);
+      const marketStatus = getMarketStatus(String(position.exchange ?? 'NSE'), new Date());
+      if (!marketStatus.isOpen) return { ok: false, error: MARKET_CLOSED_MESSAGE };
       const requestedPrice = Number(closePrices[position.symbol]);
       const fallbackPrice = Number(position.currentPrice ?? position.entryPrice);
       const exitPrice = Number.isFinite(requestedPrice) && requestedPrice > 0

@@ -3,9 +3,7 @@ import { Splash } from '@/components/Splash';
 import { Dashboard } from '@/components/Dashboard';
 import { SupportModal } from '@/components/SupportModal';
 import { Ticker } from '@/components/Ticker';
-import { INSTRUMENTS } from '@/data/instruments';
 import { usePersistentState } from '@/hooks/usePersistentState';
-import { useLivePrices } from '@/hooks/useLivePrices';
 import { makeTx } from '@/components/WalletPanel';
 import type { DashboardTab, Position, TradeHistoryEntry, WalletTx } from '@/types';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -229,17 +227,6 @@ return () => {
 
 }, [firebaseUid, setWatchlist]);
 
-// =====================================================
-// 3. LIVE MARKET PRICES
-// =====================================================
-
-const seeds: Record<string, number> = {};
-
-for (const instrument of INSTRUMENTS) {
-seeds[instrument.symbol] = instrument.price;
-}
-
-const livePrices = useLivePrices(seeds, 2200);
 
 // =====================================================
 // 4. BODY SCROLL CONTROL
@@ -589,7 +576,7 @@ return (
   ) : (  
 
     <>  
-      <Ticker livePrices={livePrices} />  
+      <Ticker livePrices={{}} />
 
       <Dashboard  
         activeTab={activeTab}  
@@ -635,9 +622,8 @@ return (
 
 function App() {
   const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
-  if (pathname === '/trade' || pathname === '/dashboard') {
-    return <TradingApp />;
-  }
+  if (pathname !== '/source') return <TradingApp />;
+
   return (
     <Suspense
       fallback={
