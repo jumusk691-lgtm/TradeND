@@ -74,7 +74,7 @@ export function RegisterModal({
         name: cleanName,
         phone: cleanPhone,
         email: cleanEmail,
-        referral_code: referralCode,
+        my_referral_code: referralCode,
         referred_by_code: '',
         deposit_done: false,
         funds: { balance: 0 },
@@ -87,7 +87,7 @@ export function RegisterModal({
       localStorage.setItem('tradend:email', cleanEmail);
       localStorage.setItem('tradend:name', cleanName);
       localStorage.setItem('tradend:phone', cleanPhone);
-      localStorage.setItem('tradend:referral_code', referralCode);
+      localStorage.setItem('tradend:my_referral_code', referralCode);
 
       onSuccess();
     } catch (err: any) {
