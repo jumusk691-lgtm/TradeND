@@ -141,7 +141,7 @@ export function Splash({ onEnter }: SplashProps) {
           }`}
         >
           {[
-            { label: 'Daily Volume', value: '₹4,200Cr+' },
+            { label: 'Daily Volume', value: '₹4,200L+' },
             { label: 'Active Traders', value: '1.2L+' },
             { label: 'Uptime', value: '99.98%' },
           ].map((s) => (
