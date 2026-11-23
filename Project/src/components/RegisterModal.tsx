@@ -54,7 +54,7 @@ export function RegisterModal({
       const newUser = {
         name: name.trim(),
         email: cleanEmail,
-        funds: { balance: 00 },
+        funds: { balance: 0 },
         createdAt: new Date().toISOString(),
       };
 
