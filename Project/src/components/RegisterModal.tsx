@@ -1,6 +1,5 @@
-
 import { useState } from 'react';
-import { User, Mail, Lock, X } from 'lucide-react';
+import { User, Mail, Lock, Phone, X } from 'lucide-react';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { ref, set } from 'firebase/database';
 import { auth, db } from '@/lib/firebase';
@@ -12,6 +11,17 @@ interface RegisterModalProps {
   onSuccess: () => void;
 }
 
+function generateReferralCode(phone: string): string {
+  const digitsOnly = phone.replace(/\D/g, '');
+  if (digitsOnly.length >= 6) {
+    const startIndex = Math.floor((digitsOnly.length - 4) / 2);
+    const midFour = digitsOnly.slice(startIndex, startIndex + 4);
+    return `TRADEnd${midFour}`;
+  }
+  const fallback = digitsOnly.padEnd(4, '0').slice(0, 4);
+  return `TRADEnd${fallback}`;
+}
+
 export function RegisterModal({
   isOpen,
   onClose,
@@ -19,6 +29,7 @@ export function RegisterModal({
   onSuccess,
 }: RegisterModalProps) {
   const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -30,11 +41,17 @@ export function RegisterModal({
     e.preventDefault();
     setError(null);
 
+    const cleanName = name.trim();
+    const cleanPhone = phone.replace(/\D/g, '');
     const cleanEmail = email.trim().toLowerCase();
     const cleanPass = password.trim();
 
-    if (!name.trim()) {
+    if (!cleanName) {
       setError('Please enter your full name.');
+      return;
+    }
+    if (cleanPhone.length !== 10) {
+      setError('Please enter a valid 10-digit mobile number.');
       return;
     }
     if (!cleanEmail || !cleanEmail.includes('@')) {
@@ -50,10 +67,16 @@ export function RegisterModal({
     try {
       const credential = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPass);
       const uid = credential.user.uid;
+      const referralCode = generateReferralCode(cleanPhone);
+
       const userRef = ref(db, `users_details/${uid}`);
       const newUser = {
-        name: name.trim(),
+        name: cleanName,
+        phone: cleanPhone,
         email: cleanEmail,
+        referral_code: referralCode,
+        referred_by_code: '',
+        deposit_done: false,
         funds: { balance: 0 },
         createdAt: new Date().toISOString(),
       };
@@ -62,7 +85,9 @@ export function RegisterModal({
 
       localStorage.setItem('tradend:uid', uid);
       localStorage.setItem('tradend:email', cleanEmail);
-      localStorage.setItem('tradend:name', name.trim());
+      localStorage.setItem('tradend:name', cleanName);
+      localStorage.setItem('tradend:phone', cleanPhone);
+      localStorage.setItem('tradend:referral_code', referralCode);
 
       onSuccess();
     } catch (err: any) {
@@ -110,6 +135,25 @@ export function RegisterModal({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="w-full rounded-xl border border-white/10 bg-black/60 pl-9 pr-4 py-2.5 text-sm text-white focus:border-accent focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] uppercase tracking-wider text-gray-400 mb-1">
+              Mobile Number
+            </label>
+            <div className="relative">
+              <Phone className="absolute left-3 top-3 h-4 w-4 text-gray-500" />
+              <input
+                type="tel"
+                inputMode="numeric"
+                maxLength={10}
+                required
+                placeholder="10-digit Mobile Number"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                className="w-full rounded-xl border border-white/10 bg-black/60 pl-9 pr-4 py-2.5 font-mono text-sm text-white focus:border-accent focus:outline-none"
               />
             </div>
           </div>
