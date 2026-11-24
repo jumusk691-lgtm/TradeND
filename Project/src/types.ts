@@ -168,4 +168,4 @@ export function leveragesForExchange(ex: Exchange): Leverage[] {
 }
 
 export const APK_URL =
-  'https://drive.google.com/file/d/17_DqlPz8wKxIO7fDKXDSN8nfTvHoPJM5/view?usp=drivesdk';
+  'https://drive.google.com/uc?export=download&id=17_DqlPz8wKxIO7fDKXDSN8nfTvHoPJM5';
